@@ -48,7 +48,8 @@ Ten types mapping nine tables (`TriggerIndexId` is `TriggerIndex`'s composite ke
 | `StepSlaStateTransition` | `step_sla_state_transition` |
 | `Deviation` | `deviation` |
 | `IntelligenceEventLog` | `intelligence_event_log` |
-| `AuditLog` | `audit_log` |
+| `ProtocolInstanceHistory` | `protocol_instance_history` |
+| `StepInstanceHistory` | `step_instance_history` |
 
 Identifiers are UUIDv7 via [`UuidV7Generator`](#6-support). Timestamps are stamped by
 `@PrePersist` / `@PreUpdate` callbacks that **preserve a caller-supplied value** — services backdate
@@ -62,7 +63,7 @@ the form [`ActionDefinitionResolver`](#actiondefinitionresolver) parses.
 
 `ProtocolInstanceRepository`, `StepInstanceRepository`, `StepSlaStateTransitionRepository`,
 `DeviationRepository`, `IntelligenceEventLogRepository`, `ActionDefinitionRepository`,
-`AuditLogRepository`.
+`ProtocolInstanceHistoryRepository`, `StepInstanceHistoryRepository`.
 
 There is deliberately **no** `ProtocolDefinitionRepository` here. Read and write access to
 definitions differ sharply by service — the Protocol Service writes them, the others read a narrow
@@ -156,12 +157,19 @@ than guessed at — resolving on URL alone would silently pick a version.
 
 Read-only by design: creating and retiring these rows belongs to the Protocol Service.
 
-### `AuditService` and `AuditLogWriter`
+### `StateTransitionHistoryService`
 
-`AuditService` writes the audit trail from an after-commit callback, so the audited operation is
-never rolled back by a failure to record it. `AuditLogWriter` exists as a **separate bean** because
-its `REQUIRES_NEW` propagation only takes effect through the Spring proxy — a self-invocation would
-bypass it and silently join the committed-but-still-bound transaction, and never flush.
+Appends a row to `protocol_instance_history` / `step_instance_history` for each state change. Runs
+`MANDATORY`, inside the caller's transaction, so the history row commits with the change it records
+and there is no window where one exists without the other.
+
+Lives here rather than in one service because **both** write it: Matcher records enrolment, step
+creation and completion; the Compliance Service records each `sla_status` it applies. Append-only is
+what makes two writers safe — they insert disjoint rows and neither updates the other's. Before
+Compliance wrote here, every time-driven transition was missing from the table, so a step that went
+overdue and was never completed had one history row instead of three.
+
+`step_instance_history.sla_status` is nullable, mirroring the column it copies.
 
 ## 5. `web`
 

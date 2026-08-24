@@ -25,8 +25,8 @@ public class ProtocolInstance {
     @Column(name = "patient_id", nullable = false)
     private String patientId;
 
-    @Column(name = "protocol_canonical", nullable = false)
-    private String protocolCanonical;
+    // No protocol_canonical: it is protocolDefinition.getCanonical() (url|version), and since
+    // (url, version) is unique with a new row per version, the join is stable rather than a snapshot.
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "protocol_definition_id", nullable = false)

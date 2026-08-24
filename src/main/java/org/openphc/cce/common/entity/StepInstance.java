@@ -39,9 +39,15 @@ public class StepInstance {
     @Column(name = "step_status", nullable = false)
     private StepStatus stepStatus;
 
-    /** Has the SLA been met? Independent of whether the work was recorded — see {@link #stepStatus}. */
+    /**
+     * Has the SLA been met? Independent of whether the work was recorded — see {@link #stepStatus}.
+     *
+     * <p><strong>Nullable, and null is meaningful:</strong> it means no threshold has fallen due yet, so
+     * timeliness has not been judged. A step with no due date at all stays null for good. Written only
+     * by the Compliance Service, as it applies {@code step_sla_state_transition} rows.
+     */
     @Enumerated(EnumType.STRING)
-    @Column(name = "sla_status", nullable = false)
+    @Column(name = "sla_status")
     private SlaStatus slaStatus;
 
     // SLA thresholds are not stored here. Each one is a step_sla_state_transition row carrying its
@@ -53,8 +59,9 @@ public class StepInstance {
     @Column(name = "completed_by_source")
     private String completedBySource;
 
-    @Column(name = "completed_by_event_id")
-    private UUID completedByEventId;
+    /** The {@code matcher_event_log} row whose event matched this step. FK; null until matched. */
+    @Column(name = "matched_event_id")
+    private UUID matchedEventId;
 
     @Column(name = "required_behavior")
     private String requiredBehavior;

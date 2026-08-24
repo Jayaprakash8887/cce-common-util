@@ -1,12 +1,12 @@
 package org.openphc.cce.common.service;
 
-import org.openphc.cce.common.service.AuditService;
 import org.openphc.cce.common.service.DeviationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.openphc.cce.common.entity.Deviation;
@@ -34,9 +34,6 @@ class DeviationServiceTest {
     @Mock
     private DeviationRepository deviationRepository;
 
-    @Mock
-    private AuditService auditService;
-
     private DeviationService service;
     private ObjectMapper objectMapper;
 
@@ -44,7 +41,7 @@ class DeviationServiceTest {
     void setUp() {
         objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
-        service = new DeviationService(deviationRepository, auditService, objectMapper);
+        service = new DeviationService(deviationRepository, objectMapper);
     }
 
     @Test
@@ -64,7 +61,6 @@ class DeviationServiceTest {
         assertTrue(result.created(), "A newly inserted deviation should signal created=true");
         assertNotNull(result.deviation().getId());
         assertEquals(DeviationType.ORDER_VIOLATION, result.deviation().getDeviationType());
-        assertEquals(protocolInstance, result.deviation().getProtocolInstance());
         assertEquals(step, result.deviation().getStepInstance());
         assertNotNull(result.deviation().getDetectedAt());
 
@@ -72,7 +68,9 @@ class DeviationServiceTest {
     }
 
     @Test
-    void createDeviation_auditsDeviationDetected() {
+    void createDeviation_linksTheStepAndNotTheEnrolmentSeparately() {
+        // The enrolment is reachable through the step, so deviation carries no protocol_instance_id of
+        // its own — one less column that could disagree with the step it hangs off.
         ProtocolInstance protocolInstance = buildProtocolInstance();
         StepInstance step = buildStep(protocolInstance, SlaStatus.OVERDUE);
 
@@ -84,8 +82,10 @@ class DeviationServiceTest {
 
         service.createDeviation(step, DeviationType.ORDER_VIOLATION);
 
-        verify(auditService).audit(eq("MATCHER"), eq("DEVIATION_DETECTED"),
-                eq("system"), eq("Deviation"), anyString(), anyMap());
+        ArgumentCaptor<Deviation> saved = ArgumentCaptor.forClass(Deviation.class);
+        verify(deviationRepository).save(saved.capture());
+        assertSame(step, saved.getValue().getStepInstance());
+        assertSame(protocolInstance, saved.getValue().getStepInstance().getProtocolInstance());
     }
 
     @Test
@@ -132,7 +132,6 @@ class DeviationServiceTest {
 
         Deviation existing = Deviation.builder()
                 .id(UUID.randomUUID())
-                .protocolInstance(protocolInstance)
                 .stepInstance(step)
                 .deviationType(DeviationType.ORDER_VIOLATION)
                 .detectedAt(OffsetDateTime.now(ZoneOffset.UTC))
@@ -146,7 +145,6 @@ class DeviationServiceTest {
         assertFalse(result.created(), "Should signal the deviation already existed");
         assertSame(existing, result.deviation(), "Should return the pre-existing deviation");
         verify(deviationRepository, never()).save(any(Deviation.class));
-        verify(auditService, never()).audit(any(), any(), any(), any(), any(), anyMap());
     }
 
     @Test
@@ -179,7 +177,6 @@ class DeviationServiceTest {
                 .id(UUID.randomUUID())
                 .protocolDefinition(protocolDef)
                 .patientId("patient-123")
-                .protocolCanonical("http://openphc.org/PlanDefinition/anc-high-risk|1.0.0")
                 .status(ProtocolInstanceStatus.ACTIVE)
                 .enrolledAt(OffsetDateTime.now(ZoneOffset.UTC))
                 .build();

@@ -2,7 +2,6 @@ package org.openphc.cce.common.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.openphc.cce.common.entity.Deviation;
-import org.openphc.cce.common.entity.ProtocolInstance;
 import org.openphc.cce.common.entity.StepInstance;
 import org.openphc.cce.common.enums.DeviationType;
 import org.openphc.cce.common.repository.DeviationRepository;
@@ -24,14 +23,11 @@ public class DeviationService {
     private static final Logger log = LoggerFactory.getLogger(DeviationService.class);
 
     private final DeviationRepository deviationRepository;
-    private final AuditService auditService;
     private final ObjectMapper objectMapper;
 
     public DeviationService(DeviationRepository deviationRepository,
-                            AuditService auditService,
                             ObjectMapper objectMapper) {
         this.deviationRepository = deviationRepository;
-        this.auditService = auditService;
         this.objectMapper = objectMapper;
     }
 
@@ -63,15 +59,12 @@ public class DeviationService {
      */
     public DeviationResult createDeviation(StepInstance step, DeviationType deviationType,
                                      Map<String, Object> additionalMetadata) {
-        ProtocolInstance protocolInstance = step.getProtocolInstance();
-
         Map<String, Object> metadata = new LinkedHashMap<>();
         if (additionalMetadata != null) {
             metadata.putAll(additionalMetadata);
         }
 
-        return recordDeviation(protocolInstance, step, deviationType,
-                metadata.isEmpty() ? null : metadata);
+        return recordDeviation(step, deviationType, metadata.isEmpty() ? null : metadata);
     }
 
     /**
@@ -84,8 +77,8 @@ public class DeviationService {
      * @return a {@link DeviationResult} — {@code created=true} with the new row, or
      *         {@code created=false} with the pre-existing deviation for this (step, type).
      */
-    private DeviationResult recordDeviation(ProtocolInstance protocolInstance, StepInstance step,
-                                     DeviationType deviationType, Map<String, Object> metadata) {
+    private DeviationResult recordDeviation(StepInstance step, DeviationType deviationType,
+                                     Map<String, Object> metadata) {
         // Idempotency guard: a step has at most one deviation per type. A redelivered inbound event
         // (Kafka is at-least-once) or a concurrent consumer thread can
         // reach this point for the same (step, type); return the existing deviation instead
@@ -102,7 +95,6 @@ public class DeviationService {
         OffsetDateTime detectedAt = OffsetDateTime.now(ZoneOffset.UTC);
 
         Deviation deviation = Deviation.builder()
-                .protocolInstance(protocolInstance)
                 .stepInstance(step)
                 .deviationType(deviationType)
                 .detectedAt(detectedAt)
@@ -111,17 +103,8 @@ public class DeviationService {
 
         deviation = deviationRepository.save(deviation);
 
-        // Audit
-        auditService.audit("MATCHER", "DEVIATION_DETECTED", "system",
-                "Deviation", deviation.getId().toString(),
-                Map.of("deviationType", deviationType.name(),
-                        "stepInstanceId", step.getId().toString(),
-                        "actionId", step.getActionId(),
-                        "protocolInstanceId", protocolInstance.getId().toString(),
-                        "protocolCanonical", protocolInstance.getProtocolCanonical()));
-
-        log.info("Recorded {} deviation: deviationId={}, stepId={}, protocolInstanceId={}",
-                deviationType, deviation.getId(), step.getId(), protocolInstance.getId());
+        log.info("Recorded {} deviation: deviationId={}, stepId={}, actionId={}",
+                deviationType, deviation.getId(), step.getId(), step.getActionId());
 
         return new DeviationResult(deviation, true);
     }

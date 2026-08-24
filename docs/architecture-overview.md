@@ -106,7 +106,7 @@ clinical work that caused it commits regardless.
 Two independent facts about a step, in two columns:
 
 - **`step_status`** — did the expected event arrive? `NOT_STARTED` → `COMPLETED`.
-- **`sla_status`** — was the deadline met? `PENDING` → `OVERDUE` → `MISSED`, or `MET`.
+- **`sla_status`** — was the deadline met? *null* → `OVERDUE` → `MISSED`, or *null* → `MET`.
 
 ```mermaid
 stateDiagram-v2
@@ -121,11 +121,10 @@ stateDiagram-v2
 stateDiagram-v2
     direction LR
     state "sla_status — was it on time?" as SL {
-        [*] --> PENDING
-        PENDING --> MET : completed before its due date
-        PENDING --> OVERDUE : due date passes
-        OVERDUE --> MET : optional step, allowed to miss
-        OVERDUE --> MISSED : missed date passes
+        [*] --> null : no threshold judged yet
+        null --> MET : due date passes, work was recorded before it
+        null --> OVERDUE : due date passes, work was not
+        OVERDUE --> MISSED : missed date passes, work still not recorded
     }
 ```
 
@@ -135,12 +134,20 @@ column. Splitting them means the pair reads directly: `COMPLETED` + `MISSED` is 
 done, `NOT_STARTED` + `MISSED` is work that did not. `completion_status` was dropped because
 early-versus-late is derivable from the pair.
 
-`PENDING` and the former `DUE` meant the same thing, so `DUE` is gone. Tolerance now affects only
-the transition to `MISSED`.
+`sla_status` has **no initial enum value**. The column is nullable, and null means no threshold has
+fallen due, so timeliness has not been judged. The former `PENDING` and `DUE` both said that, and
+saying it with an enum constant made the absence of a judgement look like one that had been made. Null
+is also the permanent state of a step with no due date: no thresholds are scheduled for it, so nothing
+will ever judge it, which is exactly right.
 
-Ownership: the Matcher Service writes `step_status`; the Compliance Service writes `sla_status` as
-deadlines pass, and the Matcher Service settles it once at completion. Neither writes the other's
-column. See [Data Dictionary §3](data-dictionary.md#3-ownership).
+Ownership: the Matcher Service writes `step_status` and `completed_at`; the **Compliance Service alone**
+writes `sla_status`. Matcher records that the work happened and when, never whether that was timely —
+so there is no rule about which service may overwrite the other, because only one of them ever writes
+the column. The cost is that an on-time completion reads as null until its due date passes; the gain is
+that a step's SLA has exactly one author and one source of evidence. See
+[Data Dictionary §3](data-dictionary.md#3-ownership).
+
+What each threshold means for a step is the SLA transition contract, in §5.
 
 ---
 
@@ -165,14 +172,34 @@ permanent.
 What the applier does depends on the step it finds, because the event may have arrived between the
 row being scheduled and the deadline falling due:
 
-| Step state when the transition fires | Action |
-|---|---|
-| `NOT_STARTED` | advance `sla_status`, record the deviation |
-| `COMPLETED`, `completed_at >= process_by` | leave `sla_status` (Matcher already settled it), record the deviation — the work was late |
-| `COMPLETED`, `completed_at < process_by` | consume the row and do nothing — the event beat the deadline |
+The Compliance Service decides what a fallen threshold means by comparing `step_instance.completed_at`
+against the row's `process_by`. It does not consult the wall clock: the row was claimed *because* its
+deadline passed, and all that remains to ask is whether the work had happened by then.
 
-An optional step (`could`) that misses its deadline resolves to `MET` with no deviation: nothing was
-required, so nothing was breached. The applier never writes `step_status`.
+| Row | Step when applied | `sla_status` | Deviation |
+|---|---|---|---|
+| `DUE_DATE_REACHED` | not completed | `OVERDUE` | `OVERDUE` |
+| `DUE_DATE_REACHED` | `completed_at >= process_by` | `OVERDUE` | `OVERDUE` |
+| `DUE_DATE_REACHED` | `completed_at < process_by` | `MET` | — |
+| `MISSED_DATE_REACHED` | not completed | `MISSED` (`must` only) | `MISSED` (`must` only) |
+| `MISSED_DATE_REACHED` | `completed_at >= process_by` | `MISSED` (`must` only) | `MISSED` (`must` only) |
+| `MISSED_DATE_REACHED` | `completed_at < process_by` | *unchanged* | — |
+
+The last row is the one to be careful about. A step completed *between* its two thresholds did not
+breach the missed date, but it is not `MET` either — it is the `OVERDUE` the due-date row made it.
+"Did not breach this threshold" and "met its SLA" coincide only at the due date, which is why `MET` is
+written on that row alone, and only over a null.
+
+Writes are **forward-only**: `MET` and `MISSED` are settled outcomes, and `OVERDUE` never replaces
+`MISSED` — which is what a retry applying two rows out of order would otherwise do.
+
+A `MISSED` deviation is **`must`-only**, and so is the `MISSED` status. An optional (`could`) step is
+left alone by its missed threshold on both paths — never arrived and recorded late alike. Nothing was
+required of it, and exempting only the step that never arrived would penalise optional work done late
+more heavily than optional work not done at all. The exemption is `MISSED`-only: an optional step still
+takes an `OVERDUE` for passing its due date, because running late is a reportable fact about it.
+
+The applier never writes `step_status`.
 
 A row that fails is retried with exponential backoff (`2^attempts`, capped), not discarded.
 

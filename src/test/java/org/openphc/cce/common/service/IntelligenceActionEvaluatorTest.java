@@ -532,7 +532,6 @@ class IntelligenceActionEvaluatorTest {
                 .id(UUID.randomUUID())
                 .patientId("patient-1")
                 .protocolDefinition(protocolDef)
-                .protocolCanonical("http://openphc.org/PlanDefinition/test|1.0.0")
                 .status(ProtocolInstanceStatus.ACTIVE)
                 .enrolledAt(OffsetDateTime.now(ZoneOffset.UTC))
                 .build();
@@ -550,7 +549,6 @@ class IntelligenceActionEvaluatorTest {
     private Deviation buildDeviation(StepInstance step, DeviationType type) {
         return Deviation.builder()
                 .id(UUID.randomUUID())
-                .protocolInstance(step.getProtocolInstance())
                 .stepInstance(step)
                 .deviationType(type)
                 .detectedAt(OffsetDateTime.now(ZoneOffset.UTC))

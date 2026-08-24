@@ -105,18 +105,6 @@ class EntityLifecycleCallbacksTest {
     }
 
     @Test
-    void auditLog_stampsItsTimestamp() {
-        AuditLog entry = AuditLog.builder().build();
-        entry.onCreate();
-        assertNotNull(entry.getTimestamp());
-
-        AuditLog explicit = AuditLog.builder().timestamp(EXPLICIT).build();
-        explicit.onCreate();
-        assertEquals(EXPLICIT, explicit.getTimestamp(),
-                "the audited moment, not the moment the row was written");
-    }
-
-    @Test
     void intelligenceEventLog_stampsCreatedAt() {
         IntelligenceEventLog entry = IntelligenceEventLog.builder().build();
         entry.onCreate();

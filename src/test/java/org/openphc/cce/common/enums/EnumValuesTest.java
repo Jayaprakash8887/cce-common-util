@@ -31,8 +31,7 @@ class EnumValuesTest {
 
     @Test
     void slaStatus_hasCorrectValues() {
-        assertEquals(4, SlaStatus.values().length);
-        assertNotNull(SlaStatus.valueOf("PENDING"));
+        assertEquals(3, SlaStatus.values().length);
         assertNotNull(SlaStatus.valueOf("OVERDUE"));
         assertNotNull(SlaStatus.valueOf("MISSED"));
         assertNotNull(SlaStatus.valueOf("MET"));
@@ -84,15 +83,20 @@ class EnumValuesTest {
     }
 
     @Test
-    void slaTransitionTypesCarryTheStatusPairTheyMoveBetween() {
-        // The applier reads these rather than switching on the type, so the pair is the state
-        // machine: pending advances to overdue, and overdue advances to missed.
-        assertEquals(SlaStatus.PENDING, SlaTransitionType.PENDING_TO_OVERDUE.fromStatus());
-        assertEquals(SlaStatus.OVERDUE, SlaTransitionType.PENDING_TO_OVERDUE.toStatus());
-        assertEquals(SlaStatus.OVERDUE, SlaTransitionType.OVERDUE_TO_MISSED.fromStatus());
-        assertEquals(SlaStatus.MISSED, SlaTransitionType.OVERDUE_TO_MISSED.toStatus());
-        assertEquals(SlaTransitionType.PENDING_TO_OVERDUE.toStatus(),
-                SlaTransitionType.OVERDUE_TO_MISSED.fromStatus(),
-                "the two transitions chain, leaving no reachable gap");
+    void slaTransitionTypesCarryTheStatusABreachReaches() {
+        // A transition names a deadline, not a from/to pair: crossing the due date lands a
+        // completed-on-time step on MET and an outstanding one on OVERDUE, so only the breach
+        // outcome is fixed by the type.
+        assertEquals(SlaStatus.OVERDUE, SlaTransitionType.DUE_DATE_REACHED.breachStatus());
+        assertEquals(SlaStatus.MISSED, SlaTransitionType.MISSED_DATE_REACHED.breachStatus());
+    }
+
+    @Test
+    void slaStatusHasNoPendingConstant() {
+        // Null models "not yet judged". An enum constant for it read as a judgement that had been
+        // made, and left the no-SLA-at-all case with nowhere honest to sit.
+        assertTrue(java.util.Arrays.stream(SlaStatus.values()).noneMatch(v -> v.name().equals("PENDING")),
+                "PENDING is a null sla_status, not an enum value");
+        assertEquals(3, SlaStatus.values().length);
     }
 }

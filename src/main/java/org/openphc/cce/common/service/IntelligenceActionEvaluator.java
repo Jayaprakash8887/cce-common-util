@@ -204,9 +204,11 @@ public class IntelligenceActionEvaluator {
                     .severity(severity)
                     .intelligenceDestination(intelligenceDestination)
                     .stepStatus(step.getStepStatus().code())
-                    .slaStatus(step.getSlaStatus().name().toLowerCase())
+                    // Null while no threshold has fallen due, and for a step with no SLA at all.
+                    .slaStatus(slaStatusCode(step))
                     .actionId(step.getActionId())
-                    .protocolCanonical(protocol.getProtocolCanonical())
+                    // Derived rather than stored: protocol_instance no longer denormalizes it.
+                    .protocolCanonical(protocol.getProtocolDefinition().getCanonical())
                     .detectedAt(OffsetDateTime.now(ZoneOffset.UTC))
                     .eventPayload(eventPayload)
                     .build();
@@ -222,7 +224,8 @@ public class IntelligenceActionEvaluator {
                     .actionType(definition.getActionType().name())
                     .intelligenceDestination(intelligenceDestination)
                     .stepStatus(step.getStepStatus().code())
-                    .slaStatus(step.getSlaStatus().name().toLowerCase())
+                    // Null while no threshold has fallen due, and for a step with no SLA at all.
+                    .slaStatus(slaStatusCode(step))
                     .triggerReason(triggerReason)
                     .stepActionId(action.actionId())
                     .evaluationExpression(action.conditionExpression())
@@ -262,13 +265,20 @@ public class IntelligenceActionEvaluator {
         }
     }
 
+    /** A step's SLA status as its lowercase code, or null while no threshold has been judged. */
+    private static String slaStatusCode(StepInstance step) {
+        return step.getSlaStatus() != null ? step.getSlaStatus().name().toLowerCase() : null;
+    }
+
     // ── Context builders ──
 
 
     private Map<String, Object> buildDeviationContext(StepInstance step, Deviation deviation) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("stepStatus", step.getStepStatus().code());
-        context.put("slaStatus", step.getSlaStatus().name().toLowerCase());
+        // Null when no threshold has fallen due. A JSONLogic rule comparing slaStatus to a string
+        // simply does not match, which is the right outcome: there is no judgement to react to.
+        context.put("slaStatus", slaStatusCode(step));
         context.put("deviationType", deviation.getDeviationType().name().toLowerCase());
         context.put("actionId", step.getActionId());
         context.put("repeatIndex", step.getRepeatIndex());
@@ -293,7 +303,9 @@ public class IntelligenceActionEvaluator {
     private Map<String, Object> buildCompletionContext(StepInstance step) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("stepStatus", step.getStepStatus().code());
-        context.put("slaStatus", step.getSlaStatus().name().toLowerCase());
+        // Null when no threshold has fallen due. A JSONLogic rule comparing slaStatus to a string
+        // simply does not match, which is the right outcome: there is no judgement to react to.
+        context.put("slaStatus", slaStatusCode(step));
         context.put("actionId", step.getActionId());
         context.put("repeatIndex", step.getRepeatIndex());
 

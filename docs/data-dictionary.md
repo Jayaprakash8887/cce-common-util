@@ -30,12 +30,11 @@ For which service *creates* and which service *writes* each table, see
 7. [step_sla_state_transition](#7-step_sla_state_transition)
 8. [deviation](#8-deviation)
 9. [trigger_index](#9-trigger_index)
-10. [audit_log](#10-audit_log)
-11. [action_definition](#11-action_definition)
-12. [intelligence_event_log](#12-intelligence_event_log)
-13. [Enumerated Value Reference](#13-enumerated-value-reference)
-14. [Relationships & Foreign Keys](#14-relationships--foreign-keys)
-15. [JSONB Column Schemas](#15-jsonb-column-schemas)
+10. [action_definition](#10-action_definition)
+11. [intelligence_event_log](#11-intelligence_event_log)
+12. [Enumerated Value Reference](#12-enumerated-value-reference)
+13. [Relationships & Foreign Keys](#13-relationships--foreign-keys)
+14. [JSONB Column Schemas](#14-jsonb-column-schemas)
 
 ---
 
@@ -66,7 +65,6 @@ erDiagram
     PROTOCOL_INSTANCE {
         uuid id PK
         varchar patient_id
-        varchar protocol_canonical
         uuid protocol_definition_id FK
         timestamptz enrolled_at
         varchar status
@@ -83,7 +81,7 @@ erDiagram
         varchar sla_status
         timestamptz completed_at
         varchar completed_by_source
-        uuid completed_by_event_id
+        uuid matched_event_id
         varchar required_behavior
         timestamptz created_at
         timestamptz updated_at
@@ -93,8 +91,6 @@ erDiagram
         uuid id PK
         uuid step_instance_id FK
         varchar transition_type
-        varchar from_status
-        varchar to_status
         timestamptz process_by
         boolean is_processed
         timestamptz processed_at
@@ -163,7 +159,6 @@ erDiagram
         uuid id PK
         jsonb event_payload
         uuid action_definition_id
-        uuid protocol_instance_id
         uuid step_instance_id
         uuid deviation_id
         varchar subject
@@ -206,7 +201,6 @@ erDiagram
 | 4 | `step_sla_state_transition` | Each step's SLA schedule — one row per threshold | Medium–High |
 | 5 | `deviation` | Recorded protocol deviations | Medium |
 | 6 | `trigger_index` | Inverted index for fast Tier 1 structural event matching | Low (per protocol load) |
-| 7 | `audit_log` | Audit trail of operations across the services | Medium–High |
 | 8 | `action_definition` | FHIR ActivityDefinition resources for intelligence actions | Low (tens) |
 | 9 | `intelligence_event_log` | Intelligence action execution and evaluation context (flat, no FKs) | Medium–High |
 
@@ -217,12 +211,15 @@ erDiagram
 One database, `ccedb`, shared by three services. Two rules keep that safe: exactly one service runs
 the DDL for a table, and exactly one service writes any given column.
 
+There is no `audit_log`. It was dropped in 2.0.0: the append-only history tables already carry state
+transitions, and actor attribution is planned to move onto the domain tables rather than a parallel
+log that duplicated half of them without the other half's detail.
+
 | Table | Migration owner | Writers | Readers |
 |---|---|---|---|
 | `protocol_definition` | Protocol | Protocol | Matcher, Compliance |
 | `action_definition` | Protocol | Protocol | Matcher, Compliance |
 | `trigger_index` | Protocol | Protocol | Matcher |
-| `audit_log` | Protocol | Protocol, Matcher | — |
 | `protocol_instance` | Matcher | Matcher | Compliance |
 | `step_instance` | Matcher | Matcher, **Compliance** (see below) | both |
 | `step_sla_state_transition` | Matcher | Matcher (inserts), Compliance (claims) | both |
@@ -234,19 +231,25 @@ Each service keeps its own Flyway history table — `flyway_schema_history_proto
 Service creates no tables and runs Flyway not at all; it validates the mapping it was given
 (`ddl-auto: validate`) and fails fast if the schema it needs is absent.
 
-### The one shared table
+### The shared tables
 
-`step_instance` is the only table two services write, and they write **disjoint columns**:
+`step_instance` is written by both services, on **disjoint columns**:
 
 | Column | Writer | Meaning |
 |---|---|---|
 | `step_status` | Matcher only | whether the expected event arrived (`NOT_STARTED` → `COMPLETED`) |
-| `sla_status` | Compliance only, plus Matcher at completion | whether the deadline was met (`PENDING` → `OVERDUE` → `MISSED`, or `MET`) |
+| `sla_status` | **Compliance only** | whether the deadline was met (null → `OVERDUE` → `MISSED`, or null → `MET`). Matcher records `completed_at`; Compliance alone judges timeliness from it. |
 
 The split is the point of the design: *did the work happen* and *did it happen on time* are
 independent facts, and merging them into one column made states like "completed, but late"
 unrepresentable. See [Architecture Overview §4](architecture-overview.md#4-step-status-and-sla-status)
 for the state machines.
+
+`step_instance_history`, `deviation` and `intelligence_event_log` are also written by both, but they
+are **append-only**: the two services insert disjoint rows and neither updates the other's, so there
+is no shared mutable state to coordinate. Matcher records step creation and completion in history;
+Compliance records each `sla_status` it writes. Without that second writer the time-driven half of
+every step's timeline would be missing from the table and from the CDC stream downstream of it.
 
 Deployment order follows the migration column: **Protocol → Matcher → Compliance**. Matcher's
 migration declares foreign keys into `protocol_definition`, and Compliance validates against tables
@@ -281,7 +284,7 @@ Stores FHIR R4 **PlanDefinition** resources that define clinical protocols. Each
 
 ### Canonical Reference
 
-The **canonical reference** is `url|version` (e.g., `http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1`). Computed by the JPA entity method `getCanonical()` and stored in `protocol_instance.protocol_canonical` for denormalized lookups.
+The **canonical reference** is `url|version` (e.g., `http://openphc.org/fhir/PlanDefinition/anc-high-risk|2.1`). Computed by the JPA entity method `getCanonical()`. It is **not** stored on `protocol_instance`: `(url, version)` is unique and a new version lands as a new `protocol_definition` row, so reaching it by FK gives the version the patient was enrolled under, not merely the current one. A stored copy would have been denormalization with nothing to gain.
 
 ---
 
@@ -295,7 +298,6 @@ Represents a **patient's enrollment** in a specific clinical protocol. Created w
 |--------|-----------|----------|---------|-------------|
 | `id` | `UUID` | **NOT NULL** | — (app-generated) | Primary key. Time-ordered **UUID v7** assigned by the application (`UuidV7Generator`), so rows sort by creation time, giving index locality on insert. |
 | `patient_id` | `VARCHAR` | **NOT NULL** | — | UPID of the enrolled patient (e.g., `260115-0001-7823`). Derived from the CloudEvent `subject` field. |
-| `protocol_canonical` | `VARCHAR` | **NOT NULL** | — | Denormalized `url|version` reference. Stored for fast display without joining `protocol_definition`. |
 | `protocol_definition_id` | `UUID` | **NOT NULL** | — | Foreign key → `protocol_definition.id`. |
 | `enrolled_at` | `TIMESTAMPTZ` | **NOT NULL** | — | **Clinical occurrence time** of the first qualifying event (when the patient entered care) — resolved by the Matcher Service from the payload, then the envelope, then `now()` — **not** ingestion/processing time. Fixed by the first matching event (enrollment is idempotent). Records the initial state-transition `changed_at` and is the date-filter anchor for downstream analytics cohorts. See clinical event time extraction, in the Matcher Service repo. |
 | `status` | `VARCHAR` | **NOT NULL** | — | Instance lifecycle status. See [ProtocolInstanceStatus](#protocolinstancestatus). |
@@ -330,7 +332,7 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | `sla_status` | `VARCHAR` | **NOT NULL** | — | Whether the deadline has been met. See [SlaStatus](#slastatus). |
 | `completed_at` | `TIMESTAMPTZ` | Yes | — | **Clinical occurrence time** of the completing event (when the act happened), not ingestion time — clamped to `now()`. Drives completion status and dependent steps' due dates. `NULL` for non-completed steps. See clinical event time extraction, in the Matcher Service repo. |
 | `completed_by_source` | `VARCHAR` | Yes | — | CloudEvent `source` that completed this step. |
-| `completed_by_event_id` | `UUID` | Yes | — | Foreign key → `matcher_event_log.id`. Links to the event that completed this step. |
+| `matched_event_id` | `UUID` | Yes | — | Foreign key → `matcher_event_log.id`. Links to the event that completed this step. |
 | `required_behavior` | `VARCHAR` | Yes | — | FHIR `requiredBehavior` code from `PlanDefinition.action`: `must`, `could`, or `must-unless-documented`. Determines whether the step produces a deviation on non-completion. |
 | `created_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Record creation timestamp. |
 | `updated_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Last modification timestamp. |
@@ -347,10 +349,10 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | Primary Key | `step_instance_pkey` | `id` |
 | Foreign Key | `step_instance_protocol_instance_id_fkey` | `protocol_instance_id` → `protocol_instance(id)` |
 | Check | — | `step_status IN ('NOT_STARTED', 'COMPLETED')` |
-| Check | — | `sla_status IN ('PENDING', 'OVERDUE', 'MISSED', 'MET')` |
+| Check | — | `sla_status IN ('OVERDUE', 'MISSED', 'MET')` — nullable, and null is the unjudged initial state |
 | Check | — | `required_behavior IN ('must', 'could', 'must-unless-documented')` |
 | B-tree Index | `idx_step_instance_protocol` | `protocol_instance_id` — All steps within a protocol instance. |
-| Partial B-tree | `idx_step_instance_sla_status` | `sla_status WHERE sla_status IN ('PENDING', 'OVERDUE')` — steps whose SLA can still move; `MET` and `MISSED` have no threshold left to cross. |
+| Partial B-tree | `idx_step_instance_sla_status` | `sla_status WHERE sla_status IS NULL OR sla_status = 'OVERDUE'` — steps whose SLA can still move; `MET` and `MISSED` have no threshold left to cross. |
 | Partial B-tree | `idx_step_instance_not_started` | `(protocol_instance_id, action_id) WHERE step_status = 'NOT_STARTED'` — locating the step a late-arriving event should complete. |
 
 ### Status Machines
@@ -362,7 +364,7 @@ driven by a time threshold being crossed. Neither transition touches the other.
   step_status (event-driven)              sla_status (time-driven)
 
    ┌───────────┐                           ┌───────────┐
-   │  NOT_STARTED  │                           │  PENDING  │
+   │  NOT_STARTED  │                           │   (null)  │
    └─────┬─────┘                           └─────┬─────┘
          │  matching event arrives                │  due_date reached
          ▼                                        ▼
@@ -400,7 +402,7 @@ durable record of when each deadline fell and when it was applied. Rows are reta
 
 | Column group | Written by |
 |---|---|
-| `step_instance_id`, `transition_type`, `from_status`, `to_status`, `process_by`, `next_attempt_at` (initial), `created_at` | **Matcher Service**, at step creation |
+| `step_instance_id`, `transition_type`, `process_by`, `next_attempt_at` (initial), `created_at` | **Matcher Service**, at step creation |
 | `is_processed`, `processed_at`, `processed_by`, `attempts`, `next_attempt_at` (updates) | **Evaluating service**, when it claims and applies the row |
 
 Matcher only ever INSERTs here. One writer per column, so the evaluator can claim rows without racing
@@ -413,9 +415,7 @@ the shared database directly — Matcher is not in that path.
 |---|---|---|---|---|
 | `id` | `UUID` | No | — | Primary key. UUID v7 (time-ordered). |
 | `step_instance_id` | `UUID` | No | — | FK → `step_instance(id)`. |
-| `transition_type` | `VARCHAR` | No | — | `PENDING_TO_OVERDUE` or `OVERDUE_TO_MISSED`. |
-| `from_status` | `VARCHAR` | No | — | The `sla_status` the step must be in for this transition to apply. |
-| `to_status` | `VARCHAR` | No | — | The `sla_status` this transition moves the step to. |
+| `transition_type` | `VARCHAR` | No | — | `DUE_DATE_REACHED` or `MISSED_DATE_REACHED`. |
 | `process_by` | `TIMESTAMPTZ` | No | — | Absolute time the transition becomes due — the clinical-time-anchored threshold. Immutable: the audit truth for when the deadline fell. |
 | `is_processed` | `BOOLEAN` | No | `FALSE` | The "done" mark. Set by the evaluating service. |
 | `processed_at` | `TIMESTAMPTZ` | Yes | — | When the transition was applied. |
@@ -431,8 +431,7 @@ the shared database directly — Matcher is not in that path.
 | Primary key | `step_sla_state_transition_pkey` | `(id)` |
 | Unique | `step_sla_state_transition_step_type_key` | `(step_instance_id, transition_type)` — a step has at most one row per type, making creation idempotent. Its leading column also serves lookups by step, so no separate index on `step_instance_id`. |
 | Foreign key | `..._step_instance_id_fkey` | → `step_instance(id)` |
-| Check | `..._type_check` | `transition_type IN ('PENDING_TO_OVERDUE', 'OVERDUE_TO_MISSED')` |
-| Check | `..._from_status_check` / `..._to_status_check` | Constrains the SLA statuses each transition moves between. |
+| Check | `..._type_check` | `transition_type IN ('DUE_DATE_REACHED', 'MISSED_DATE_REACHED')` |
 | Partial B-tree | `idx_sslt_due` | `next_attempt_at WHERE is_processed = FALSE` — the evaluator's claim path, and the only hot index. Scoped to the pending backlog however large the retained history grows. |
 
 ### Design Notes
@@ -444,7 +443,7 @@ the shared database directly — Matcher is not in that path.
   `sla_status`, which completion already settled against this same threshold; it only records the
   deviation for a breach the completion left unrecorded.
 - **An absent threshold gets no row.** A step created from its own trigger with no `tolerance-days` has
-  no `OVERDUE_TO_MISSED` row, which is precisely what "this step can never be written off" means.
+  no `MISSED_DATE_REACHED` row, which is precisely what "this step can never be written off" means.
 - **`process_by` is never rewritten**, so a settled SLA can still be judged against its original
   deadline — which is how `daysOverdue` and `daysPastMissedDate` are computed after the fact.
 - **Retention.** Rows accumulate with step volume. Partition or archive per the compliance retention
@@ -461,8 +460,7 @@ A step has **at most one deviation per type** — enforced by the `deviation_ste
 | Column | Data Type | Nullable | Default | Description |
 |--------|-----------|----------|---------|-------------|
 | `id` | `UUID` | **NOT NULL** | — (app-generated) | Primary key. Time-ordered **UUID v7** assigned by the application (`UuidV7Generator`), so rows sort by creation time, giving index locality on insert. |
-| `protocol_instance_id` | `UUID` | **NOT NULL** | — | Foreign key → `protocol_instance.id`. |
-| `step_instance_id` | `UUID` | **NOT NULL** | — | Foreign key → `step_instance.id`. |
+| `step_instance_id` | `UUID` | **NOT NULL** | — | Foreign key → `step_instance.id`. The enrolment is reached through it — there is deliberately no `protocol_instance_id` here, since `step_instance.protocol_instance_id` is itself `NOT NULL` and a second copy could only ever agree or be wrong. |
 | `deviation_type` | `VARCHAR` | **NOT NULL** | — | Type classification. See [DeviationType](#deviationtype). |
 | `detected_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Detection timestamp. |
 | `intelligence_event_id` | `UUID` | Yes | — | Links to the intelligence event published to Kafka when an intelligence action fires on this deviation. `NULL` when no intelligence actions are configured for the step. |
@@ -474,11 +472,9 @@ A step has **at most one deviation per type** — enforced by the `deviation_ste
 | Type | Name | Details |
 |------|------|---------|
 | Primary Key | `deviation_pkey` | `id` |
-| Foreign Key | `deviation_protocol_instance_id_fkey` | `protocol_instance_id` → `protocol_instance(id)` |
 | Foreign Key | `deviation_step_instance_id_fkey` | `step_instance_id` → `step_instance(id)` |
 | Unique | `deviation_step_type_key` | `(step_instance_id, deviation_type)` — At most one deviation per type per step. Idempotency guard against a retried evaluation or concurrent writers. Note it permits one `OVERDUE` **and** one `MISSED` row per step, so a step that goes overdue and is later missed yields two deviations. |
 | Check | — | `deviation_type IN ('OVERDUE', 'MISSED', 'ORDER_VIOLATION')` |
-| B-tree Index | `idx_deviation_protocol` | `protocol_instance_id` |
 | B-tree Index | `idx_deviation_type` | `deviation_type` |
 
 ---
@@ -543,37 +539,7 @@ The `:codeTriples` parameter is a list of `path|system|code` strings extracted f
 
 ---
 
-## 10. audit_log
-
-**Immutable audit trail** for the operations this service performs — step completions, protocol enrollments and deviations. Protocol loads and retirements are audited by the CCE Protocol Service, which performs them.
-
-Rows are written after the producing transaction commits, so the trail never records work that was rolled back.
-
-### Columns
-
-| Column | Data Type | Nullable | Default | Description |
-|--------|-----------|----------|---------|-------------|
-| `id` | `UUID` | **NOT NULL** | `gen_random_uuid()` | Primary key. |
-| `event_category` | `VARCHAR` | **NOT NULL** | — | High-level category. Matcher writes only `MATCHER`; other services writing to this shared table use their own. |
-| `event_type` | `VARCHAR` | **NOT NULL** | — | Specific action. Matcher emits `PROTOCOL_ENROLLED`, `EVENT_MATCHED`, `STEP_COMPLETED`, `DEVIATION_DETECTED`. |
-| `actor` | `VARCHAR` | Yes | — | Always `system` — every entry this service writes is machine-generated. |
-| `resource_type` | `VARCHAR` | Yes | — | Affected entity type (e.g., `StepInstance`, `ProtocolDefinition`). |
-| `resource_id` | `VARCHAR` | Yes | — | Affected entity UUID (stored as VARCHAR). |
-| `details` | `JSONB` | Yes | — | Event-specific context. See [JSONB: audit details](#audit_log--details). |
-| `timestamp` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | When the action occurred. |
-
-### Constraints & Indexes
-
-| Type | Name | Details |
-|------|------|---------|
-| Primary Key | `audit_log_pkey` | `id` |
-| B-tree Index | `idx_audit_log_category` | `event_category` |
-| B-tree Index | `idx_audit_log_actor` | `actor` |
-| B-tree Index | `idx_audit_log_timestamp` | `timestamp` |
-
----
-
-## 11. action_definition
+## 10. action_definition
 
 Stores FHIR R4 **ActivityDefinition** resources that define what CCE does when an intelligence action fires. Referenced by PlanDefinition intelligence actions via `definitionCanonical`. Each action definition specifies the type of action (FHIR `ActivityDefinition.kind`: `CommunicationRequest`, `Task`, `ServiceRequest`) and the full ActivityDefinition JSON (including message templates and routing configuration). Severity and destination are required on the PlanDefinition intelligence action extensions and are never stored on this table.
 
@@ -609,7 +575,7 @@ The **canonical reference** is `canonical_url|version` (e.g., `ActivityDefinitio
 
 ---
 
-## 12. intelligence_event_log
+## 11. intelligence_event_log
 
 Records each execution of an **intelligence action** (`PlanDefinition.action.action`) in a single flat row. Created when an intelligence action's condition evaluates to `true` on deviation detection or step completion. Combines the action execution record and its evaluation context (trigger reason, expression, runtime variables) into one table — no foreign key constraints, just plain UUID columns for full decoupling. The `event_payload` JSONB column stores the complete `IntelligenceTriggerEvent` published to Kafka, and the `published` boolean tracks whether the event was successfully sent.
 
@@ -653,7 +619,7 @@ Records each execution of an **intelligence action** (`PlanDefinition.action.act
 - **Fat event pattern:** The `event_payload` JSONB column stores the complete Kafka event, making each row self-contained — anything reading this table sees exactly what was published, without joining other tables.
 - **`published` boolean:** A simple boolean tracks whether the event was successfully sent to Kafka.
 
-## 13. Enumerated Value Reference
+## 12. Enumerated Value Reference
 
 ### ProtocolDefinitionStatus
 
@@ -682,7 +648,7 @@ Did the expected clinical event arrive? Independent of timeliness.
 
 ### SlaStatus
 
-Was the deadline met? Independent of whether the work was recorded. Only `PENDING` and `OVERDUE`
+Was the deadline met? Independent of whether the work was recorded. Only a null status and `OVERDUE`
 are live — a step in `MET` or `MISSED` has no threshold left to cross and is never advanced again.
 
 Evaluated against `completed_at` (the **clinical occurrence time** of the completing event — see
@@ -691,10 +657,10 @@ reflects when the act happened, not when the event was ingested.
 
 | Value | Condition | Transitions From | Transitions To |
 |-------|-----------|-----------------|----------------|
-| `PENDING` | Before the due threshold. Nothing is late. | *(initial)* | `OVERDUE`, `MET` |
-| `OVERDUE` | Past the due threshold, before the missed one. An `OVERDUE` deviation is recorded. | `PENDING` | `MISSED` |
+| *(null)* | No threshold has fallen due, so timeliness has not been judged. Also the permanent state of a step with no due date — no SLA applies. **Not an enum value**: the column is nullable, and null is the initial state. | *(initial)* | `OVERDUE`, `MET` |
+| `OVERDUE` | The due threshold fell and the work was not recorded by then. An `OVERDUE` deviation is recorded. | *(null)* | `MISSED` |
 | `MISSED` | Past the missed threshold and the event never arrived. A `MISSED` deviation is recorded. | `OVERDUE` | *(terminal)* |
-| `MET` | Event arrived before the due threshold, **or** an optional (`could`) step was closed out without an event — nothing was breached either way. | `PENDING`, `OVERDUE` | *(terminal)* |
+| `MET` | The event arrived before the due threshold. Written only from null, on the `DUE_DATE_REACHED` row — a step already found `OVERDUE` is never relabelled as on time. | *(null)* | *(terminal)* |
 
 #### Reading the pair
 
@@ -705,7 +671,7 @@ Every combination is meaningful, and `completed_at` / `due_date` are available f
 | `COMPLETED` | `MET` | Recorded on time |
 | `COMPLETED` | `OVERDUE` | Recorded late, before being written off |
 | `COMPLETED` | `MISSED` | Recorded after being written off |
-| `NOT_STARTED` | `PENDING` / `OVERDUE` | Still outstanding |
+| `NOT_STARTED` | *(null)* / `OVERDUE` | Still outstanding |
 | `NOT_STARTED` | `MISSED` | Never recorded; deviation raised |
 | `NOT_STARTED` | `MET` | Optional step closed out without an event |
 
@@ -713,7 +679,7 @@ Every combination is meaningful, and `completed_at` / `due_date` are available f
 
 | Value | Trigger |
 |-------|---------|
-| `OVERDUE` | The evaluator advances `sla_status` `PENDING` → `OVERDUE`. Recorded by the CCE Compliance Service, not by Matcher. |
+| `OVERDUE` | The Compliance Service writes `sla_status = OVERDUE` on the `DUE_DATE_REACHED` row. Never recorded by Matcher. |
 | `MISSED` | The evaluator advances `sla_status` `OVERDUE` → `MISSED` on a `must` step. Also recorded by the evaluator. |
 | `ORDER_VIOLATION` | Step completed out of sequence (violates `relatedAction` ordering). |
 
@@ -724,10 +690,10 @@ The transition types Matcher writes to `step_sla_state_transition.transition_typ
 threshold the SLA lifecycle crosses; there is deliberately none for reaching `MET`, which is settled by
 an event arriving rather than by time passing.
 
-| Value | `from_status` → `to_status` | Threshold | Deviation recorded by the evaluator |
+| Value | Threshold | `sla_status` if the work was recorded in time | if it was not | Deviation on a breach |
 |---|---|---|---|
-| `PENDING_TO_OVERDUE` | `PENDING` → `OVERDUE` | the step's due date | `OVERDUE` |
-| `OVERDUE_TO_MISSED` | `OVERDUE` → `MISSED` (must) or `MET` (could) | due date + `tolerance-days` | `MISSED` (must only) |
+| `DUE_DATE_REACHED` | the step's due date | `MET` | `OVERDUE` | `OVERDUE` |
+| `MISSED_DATE_REACHED` | due date + `tolerance-days` | *(unchanged — the due-date row already judged it)* | `MISSED` (must only) | `MISSED` (must only) |
 
 ### ProcessingStatus
 
@@ -762,7 +728,7 @@ The `intelligence_destination` field on `intelligence_event_log` is a **free-for
 
 ---
 
-## 14. Relationships & Foreign Keys
+## 13. Relationships & Foreign Keys
 
 | Parent Table | Child Table | FK Column | Cascade | Description |
 |-------------|-------------|-----------|---------|-------------|
@@ -772,7 +738,7 @@ The `intelligence_destination` field on `intelligence_event_log` is a **free-for
 | `protocol_instance` | `deviation` | `protocol_instance_id` | No cascade | Same — no cascade from the parent. |
 | `step_instance` | `deviation` | `step_instance_id` | No cascade (DB level) | Reference only; not cascade-deleted. |
 | `step_instance` | `step_sla_state_transition` | `step_instance_id` | No cascade | One row per scheduled SLA threshold; retained after processing as the transition record. |
-| `matcher_event_log` | `step_instance` | `completed_by_event_id` | No cascade | Links completed step to triggering event. |
+| `matcher_event_log` | `step_instance` | `matched_event_id` | No cascade | Links completed step to triggering event. |
 | `action_definition` | `intelligence_event_log` | `action_definition_id` | No FK constraint | Plain UUID; delete guard in application code. |
 
 > **Note:** The `intelligence_event_log` table uses plain UUID columns with no foreign key constraints. Referential integrity for `action_definition_id`, `protocol_instance_id`, `step_instance_id`, and `deviation_id` is enforced at the application level.
@@ -781,7 +747,7 @@ The `intelligence_destination` field on `intelligence_event_log` is a **free-for
 
 ---
 
-## 15. JSONB Column Schemas
+## 14. JSONB Column Schemas
 
 ### protocol_definition — `definition`
 
@@ -852,20 +818,6 @@ For the `ORDER_VIOLATION` deviations Matcher records:
 
 The shape of `OVERDUE` / `MISSED` metadata is defined by the CCE Compliance Service that writes them.
 
-
-### audit_log — `details`
-
-Content varies by audit event type:
-
-All four are written under `event_category = MATCHER` with `actor = system`. Protocol and
-action-definition management events are audited by the service that performs them, not here.
-
-| Event Type | `resource_type` | Example `details` |
-|------------|-----------------|-------------------|
-| `PROTOCOL_ENROLLED` | `ProtocolInstance` | `{"patientId": "...", "protocolCanonical": "http://…/anc-high-risk\|1.0.0", "protocolDefinitionId": "pd-uuid-…"}` |
-| `EVENT_MATCHED` | `EventLog` | `{"protocolDefinitionId": "pd-uuid-…", "actionId": "anc-visit-1", "protocolInstanceId": "pi-uuid-…", "patientId": "..."}` |
-| `STEP_COMPLETED` | `StepInstance` | `{"actionId": "anc-visit-1", "slaStatus": "MET", "protocolInstanceId": "pi-uuid-…"}` |
-| `DEVIATION_DETECTED` | `Deviation` | `{"deviationType": "ORDER_VIOLATION", "stepInstanceId": "si-uuid-…", "actionId": "treatment", "protocolInstanceId": "pi-uuid-…", "protocolCanonical": "http://…\|1.0.0"}` |
 
 ### action_definition — `definition`
 

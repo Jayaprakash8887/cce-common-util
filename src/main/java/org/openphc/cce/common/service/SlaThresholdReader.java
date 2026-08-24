@@ -13,10 +13,10 @@ import java.util.UUID;
 /**
  * Reads a step's SLA thresholds back from its {@code step_sla_state_transition} rows.
  *
- * <p>Read-only, and shared: both services need a step's deadlines — Matcher when it settles an SLA on
- * completion, Compliance when it builds the {@code dueDate} and {@code daysOverdue} of an intelligence
- * rule context. Only the Matcher Service <em>writes</em> the schedule, so the write path deliberately
- * lives there and not here; nothing in this library can invent a deadline.
+ * <p>Read-only, and shared: Compliance needs a step's deadlines to build the {@code dueDate} and
+ * {@code daysOverdue} of an intelligence rule context, and Matcher needs them when scheduling dependent
+ * steps. Only the Matcher Service <em>writes</em> the schedule, so the write path deliberately lives
+ * there and not here; nothing in this library can invent a deadline.
  *
  * <p>Read from {@code process_by}, which the evaluating service never rewrites, so this returns the
  * original deadline whether or not the transition has already been applied.
@@ -54,8 +54,8 @@ public class SlaThresholdReader {
         OffsetDateTime missedDate = null;
         for (StepSlaStateTransition row : rows) {
             switch (row.getTransitionType()) {
-                case PENDING_TO_OVERDUE -> dueDate = row.getProcessBy();
-                case OVERDUE_TO_MISSED -> missedDate = row.getProcessBy();
+                case DUE_DATE_REACHED -> dueDate = row.getProcessBy();
+                case MISSED_DATE_REACHED -> missedDate = row.getProcessBy();
             }
         }
         return new SlaThresholds(dueDate, missedDate);

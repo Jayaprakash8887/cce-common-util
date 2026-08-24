@@ -51,7 +51,12 @@ public class IntelligenceEventLog {
     @Column(name = "step_status", nullable = false)
     private String stepStatus;
 
-    @Column(name = "sla_status", nullable = false)
+    /**
+     * The step's SLA status at evaluation time, as its FHIR-style lowercase code. Nullable: an
+     * evaluation fired by a step completion happens before any threshold has been judged, so there is
+     * genuinely no SLA status to snapshot.
+     */
+    @Column(name = "sla_status")
     private String slaStatus;
 
     @Column(name = "trigger_reason", nullable = false)

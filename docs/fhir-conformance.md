@@ -165,8 +165,9 @@ schedule the step immediately and look like a working protocol.
 
 `ActivityDefinition` resources are referenced from intelligence actions as `url|version`, resolved by
 [`ActionDefinitionResolver`](library-reference.md#actiondefinitionresolver). The same form identifies
-a protocol (`ProtocolDefinition.getCanonical()`) and is denormalized onto
-`protocol_instance.protocol_canonical`.
+a protocol (`ProtocolDefinition.getCanonical()`). It is not stored on `protocol_instance`: reaching it
+by foreign key gives the version the patient was enrolled under, because a new version lands as a new
+`protocol_definition` row rather than mutating one.
 
 A reference without a version is rejected. Resolving on URL alone would mean silently picking a
 version, and a protocol pinned to an action definition's behaviour would change underneath it on the

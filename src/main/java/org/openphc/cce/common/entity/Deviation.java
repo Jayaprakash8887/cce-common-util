@@ -28,9 +28,8 @@ public class Deviation {
     @UuidGenerator(algorithm = UuidV7Generator.class)
     private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "protocol_instance_id", nullable = false)
-    private ProtocolInstance protocolInstance;
+    // No protocol_instance_id: it is reachable as stepInstance.protocolInstance, and storing it as
+    // well left two columns to keep in step for no integrity gain.
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "step_instance_id", nullable = false)

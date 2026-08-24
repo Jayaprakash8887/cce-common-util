@@ -40,8 +40,8 @@ class SlaThresholdReaderTest {
         OffsetDateTime due = OffsetDateTime.now(ZoneOffset.UTC).plusDays(7);
         OffsetDateTime missed = due.plusDays(3);
         when(transitionRepository.findByStepInstanceId(stepId)).thenReturn(List.of(
-                row(stepId, SlaTransitionType.PENDING_TO_OVERDUE, due),
-                row(stepId, SlaTransitionType.OVERDUE_TO_MISSED, missed)));
+                row(stepId, SlaTransitionType.DUE_DATE_REACHED, due),
+                row(stepId, SlaTransitionType.MISSED_DATE_REACHED, missed)));
 
         SlaThresholdReader.SlaThresholds thresholds = reader.thresholds(stepId);
 
@@ -53,7 +53,7 @@ class SlaThresholdReaderTest {
     void readsThresholdEvenAfterTheTransitionWasApplied() {
         UUID stepId = UUID.randomUUID();
         OffsetDateTime due = OffsetDateTime.now(ZoneOffset.UTC).minusDays(2);
-        StepSlaStateTransition applied = row(stepId, SlaTransitionType.PENDING_TO_OVERDUE, due);
+        StepSlaStateTransition applied = row(stepId, SlaTransitionType.DUE_DATE_REACHED, due);
         applied.setProcessed(true);
         applied.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
         when(transitionRepository.findByStepInstanceId(stepId)).thenReturn(List.of(applied));
@@ -78,7 +78,7 @@ class SlaThresholdReaderTest {
         UUID stepId = UUID.randomUUID();
         OffsetDateTime missed = OffsetDateTime.now(ZoneOffset.UTC).plusDays(3);
         when(transitionRepository.findByStepInstanceId(stepId))
-                .thenReturn(List.of(row(stepId, SlaTransitionType.OVERDUE_TO_MISSED, missed)));
+                .thenReturn(List.of(row(stepId, SlaTransitionType.MISSED_DATE_REACHED, missed)));
 
         SlaThresholdReader.SlaThresholds thresholds = reader.thresholds(stepId);
 
@@ -91,10 +91,6 @@ class SlaThresholdReaderTest {
                 .id(UUID.randomUUID())
                 .stepInstanceId(stepId)
                 .transitionType(type)
-                .fromStatus(type == SlaTransitionType.PENDING_TO_OVERDUE
-                        ? SlaStatus.PENDING.name() : SlaStatus.OVERDUE.name())
-                .toStatus(type == SlaTransitionType.PENDING_TO_OVERDUE
-                        ? SlaStatus.OVERDUE.name() : SlaStatus.MISSED.name())
                 .processBy(processBy)
                 .nextAttemptAt(processBy)
                 .build();

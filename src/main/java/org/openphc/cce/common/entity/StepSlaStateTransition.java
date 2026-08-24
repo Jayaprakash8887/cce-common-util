@@ -26,11 +26,12 @@ import java.util.UUID;
  * rows without racing this service.
  *
  * <p>That split has one consequence worth stating: a step may complete before its row is processed, so
- * the row outlives the state it was scheduled against. Such a row is not meaningless — the evaluator
- * judges a completed step against its {@code step_instance.completed_at} rather than the wall clock, and
- * fires the transition when the step was completed past this row's {@code process_by}. Matcher then
- * records the breach without moving the SLA, which completion already settled against the same
- * threshold. A step completed before {@code process_by} breached nothing and the row is simply consumed.
+ * the row outlives the state it was scheduled against. Such a row is not meaningless — it is what makes
+ * the judgement possible at all. The evaluator compares {@code step_instance.completed_at} against this
+ * row's {@code process_by} rather than consulting the wall clock, so a step completed before the due
+ * date settles as {@code MET} and one completed after it as {@code OVERDUE} with a deviation. Matcher
+ * never judges timeliness itself, which is why there is no question of the two services overwriting
+ * each other.
  */
 @Entity
 @Table(name = "step_sla_state_transition", uniqueConstraints = @UniqueConstraint(
@@ -54,18 +55,11 @@ public class StepSlaStateTransition {
     @Column(name = "transition_type", nullable = false)
     private SlaTransitionType transitionType;
 
-    /**
-     * The SLA status the step must be in for this transition to apply, and the one it moves to.
-     *
-     * <p>Stored as text rather than as an enum for the same reason the history tables are: the value is
-     * copied from the SLA vocabulary at write time, and a constraint or mapping that lagged a future
-     * enum change would reject reads of rows that were valid when written.
-     */
-    @Column(name = "from_status", nullable = false)
-    private String fromStatus;
-
-    @Column(name = "to_status", nullable = false)
-    private String toStatus;
+    // No from_status / to_status columns. They encoded a fixed status pair per transition type, which
+    // stopped holding once PENDING was removed and a crossed threshold stopped implying one
+    // destination: the due date lands a completed-on-time step on MET and an outstanding one on
+    // OVERDUE. transition_type names the deadline; what it means for the step is decided when the row
+    // is applied, and the outcome is readable from step_instance.sla_status.
 
     /**
      * Absolute time this transition becomes due — the clinical-time-anchored threshold computed when

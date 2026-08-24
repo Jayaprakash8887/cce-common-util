@@ -4,48 +4,47 @@ package org.openphc.cce.common.enums;
  * Whether a step's service-level agreement has been met.
  *
  * <p>This is the <em>timeliness</em> half of a step's condition, independent of whether the work was
- * ever recorded ({@link StepStatus}). Two things move it:
+ * ever recorded ({@link StepStatus}).
  *
- * <ul>
- *   <li><b>Time passing.</b> The service that evaluates {@code step_sla_state_transition} advances
- *       {@code PENDING} → {@code OVERDUE} at the due threshold and {@code OVERDUE} → {@code MISSED} at
- *       the missed threshold, and records the deviation. Matcher schedules those thresholds but does
- *       not apply them.</li>
- *   <li><b>The event arriving.</b> Matcher settles the SLA on completion — {@code MET} if the event
- *       beat the due threshold, otherwise whatever status had already been reached, so the row records
- *       both that the work was done and that it was late.</li>
- * </ul>
+ * <h2>Null means "not yet judged"</h2>
+ * There is deliberately no {@code PENDING} constant, and {@code step_instance.sla_status} is nullable.
+ * A null column is the initial state: no threshold has been reached, so there is nothing to say about
+ * timeliness yet. Modelling that absence as an enum value made it look like a judgement that had been
+ * made, when it is precisely the absence of one.
  *
- * <p>Only {@link #PENDING} and {@link #OVERDUE} are live — a step in {@link #MET} or
- * {@link #MISSED} has no threshold left to cross and is never advanced again.
+ * <p>Null is also the resting state of a step that has <em>no</em> SLA. A step whose definition sets no
+ * due date gets no {@code step_sla_state_transition} rows, so no threshold will ever fall due for it and
+ * its {@code sla_status} stays null for good — correctly, because no SLA applies.
+ *
+ * <h2>One writer</h2>
+ * Every value here is written by the <strong>Compliance Service</strong> alone, as it applies
+ * {@code step_sla_state_transition} rows. Matcher schedules the thresholds and records the completion,
+ * but never judges timeliness — so there is no window in which the two services disagree about a step's
+ * SLA, and no rule about which of them may overwrite the other.
  *
  * <p>Paired with {@link StepStatus}, this classifies how timely a completion was:
  * {@code COMPLETED + MET} is on time, {@code COMPLETED + OVERDUE} is late, and
  * {@code COMPLETED + MISSED} is late past the point the step was written off.
  *
  * @see StepStatus
+ * @see SlaTransitionType
  */
 public enum SlaStatus {
 
-    /** {@code due_date} has not been reached. Nothing is late. */
-    PENDING,
-
     /**
-     * The due threshold passed without the event arriving.
+     * The due threshold passed and the event had not arrived by then. Not terminal: the missed
+     * threshold can still move it to {@link #MISSED}.
      */
     OVERDUE,
 
     /**
-     * The missed threshold passed without the event arriving. Terminal as an SLA outcome: a later
-     * event still sets {@link StepStatus#COMPLETED} but the SLA stays missed.
+     * The missed threshold passed and the event had not arrived by then. Terminal: a later event still
+     * sets {@link StepStatus#COMPLETED}, but the SLA stays missed.
      */
     MISSED,
 
     /**
-     * The SLA was satisfied. Either the event arrived before the due threshold, or the step was an
-     * optional ({@code could}) one that was closed out without an event — nothing was breached in
-     * either case. An optional step closed out this way keeps {@link StepStatus#NOT_STARTED}, which is
-     * what distinguishes it from one that was actually completed.
+     * The SLA was satisfied — the event arrived before the due threshold. Terminal.
      */
     MET
 }
