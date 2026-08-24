@@ -218,8 +218,9 @@ knowing when auditing a service's YAML: presence of a key does not prove that se
 | Property | Default | Read by |
 |---|---|---|
 | `cce.protocol.parsed-cache-size` | `256` | `ParsedProtocolCache` |
+| `cce.kafka.topics.inbound-events` | — | Matcher's `InboundEventConsumer` and its topic declarations |
 | `cce.kafka.topics.intelligence-triggers` | — | `IntelligenceTriggerProducer` |
-| `cce.kafka.topics.default-partitions` | — | consuming services' topic declarations |
+| `cce.kafka.topics.default-partitions` | `25` | consuming services' topic declarations |
 | `cce.kafka.retry.max-attempts` | `3` | consuming services' error handlers |
 | `cce.kafka.retry.backoff-interval-ms` | `1000` | consuming services' error handlers |
 | `cce.intelligence.publish-confirm-timeout-ms` | `5000` | `IntelligenceTriggerProducer` |
