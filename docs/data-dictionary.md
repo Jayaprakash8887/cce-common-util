@@ -81,7 +81,7 @@ erDiagram
         varchar sla_status
         timestamptz completed_at
         varchar completed_by_source
-        uuid matched_event_id
+        uuid matched_event_id FK
         varchar required_behavior
         timestamptz created_at
         timestamptz updated_at
