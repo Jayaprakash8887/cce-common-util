@@ -310,7 +310,12 @@ Stores FHIR R4 **PlanDefinition** resources that define clinical protocols. Each
 | Primary Key | `protocol_definition_pkey` | `id` |
 | Unique | `protocol_definition_url_version_key` | `(url, version)` — Prevents duplicate protocol versions. |
 | Check | — | `status IN ('ACTIVE', 'RETIRED')` |
-| GIN Index | `idx_protocol_definition` | `definition` (`jsonb_path_ops`) — supports JSON path queries into the stored PlanDefinition. |
+
+**No index on `definition`.** 1.x carried a GIN index over it (`jsonb_path_ops`), for the trigger
+extraction that queried the JSON directly. 2.0.0 extracts triggers into `trigger_index` at load time
+and parses the definition in process, so nothing reaches into the JSONB from SQL — every read of this
+table is by `id`, `(url, version)`, `url` or `status`, which the primary key and the unique constraint
+serve. The upgrade drops it.
 
 ### Canonical Reference
 
