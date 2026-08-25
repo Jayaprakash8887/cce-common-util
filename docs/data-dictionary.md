@@ -383,13 +383,13 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 |------|------|---------|
 | Primary Key | `step_instance_pkey` | `id` |
 | Foreign Key | `step_instance_protocol_instance_id_fkey` | `protocol_instance_id` → `protocol_instance(id)` |
+| Foreign Key | `step_instance_matched_event_id_fkey` | `matched_event_id` → `matcher_event_log(id)`. Unindexed: nothing looks a step up by the event that completed it, and the cost of the missing index is a scan per deleted `matcher_event_log` row — a table nothing deletes from. |
 | Check | — | `step_status IN ('NOT_STARTED', 'COMPLETED')` |
 | Check | — | `sla_status IN ('OVERDUE', 'MISSED', 'MET')` — nullable, and null is the unjudged initial state |
 | Check | — | `required_behavior IN ('must', 'could', 'must-unless-documented')` |
 | B-tree Index | `idx_step_instance_protocol` | `protocol_instance_id` — All steps within a protocol instance. |
 | Partial B-tree | `idx_step_instance_not_started` | `(protocol_instance_id, action_id) WHERE step_status = 'NOT_STARTED'` — locating the step a late-arriving event should complete. |
 | Partial B-tree | `idx_step_instance_completed_unjudged` | `(id) WHERE step_status = 'COMPLETED' AND completed_at IS NOT NULL AND (sla_status IS NULL OR sla_status = 'OVERDUE')` — completed steps whose SLA is still unsettled. Compliance claims their transition rows from here without waiting for the deadline; a sweep empties the set. |
-| Partial B-tree | `idx_step_instance_matched_event` | `matched_event_id WHERE matched_event_id IS NOT NULL` — steps reached from the event that completed them. |
 
 ### Status Machines
 
