@@ -346,8 +346,8 @@ Represents a **patient's enrollment** in a specific clinical protocol. Created w
 | Primary Key | `protocol_instance_pkey` | `id` |
 | Foreign Key | `protocol_instance_protocol_definition_id_fkey` | `protocol_definition_id` → `protocol_definition(id)` |
 | Check | — | `status IN ('ACTIVE', 'COMPLETED', 'WITHDRAWN', 'EXPIRED')` |
-| B-tree Index | `idx_protocol_instance_patient` | `patient_id` — Fast lookup of all protocol enrollments for a patient. |
-| Partial B-tree | `idx_protocol_instance_status` | `status WHERE status = 'ACTIVE'` — Optimizes active enrollment queries. |
+| B-tree Index | `idx_protocol_instance_enrollment` | `(patient_id, protocol_definition_id, status)` — the enrolment lookup on every matched event. Also serves a lookup by `patient_id` alone, being its leading column, which is why no separate index on `patient_id` exists. |
+| Partial B-tree | `idx_protocol_instance_status` | `status WHERE status = 'ACTIVE'` — the active-instances gauge. |
 
 ---
 
@@ -517,7 +517,6 @@ A step has **at most one deviation per type** — enforced by the `deviation_ste
 | Foreign Key | `deviation_step_instance_id_fkey` | `step_instance_id` → `step_instance(id)` |
 | Unique | `deviation_step_type_key` | `(step_instance_id, deviation_type)` — At most one deviation per type per step. Idempotency guard against a retried evaluation or concurrent writers. Note it permits one `OVERDUE` **and** one `MISSED` row per step, so a step that goes overdue and is later missed yields two deviations. |
 | Check | — | `deviation_type IN ('OVERDUE', 'MISSED', 'ORDER_VIOLATION')` |
-| B-tree Index | `idx_deviation_type` | `deviation_type` |
 
 ---
 
@@ -544,11 +543,6 @@ Only triggers that contain a `data[]` section produce `trigger_index` entries. *
 |------|------|---------|
 | Composite PK | `trigger_index_pkey` | `(resource_type, path, code_system, code_value, protocol_definition_id, action_id)` |
 | Foreign Key | `trigger_index_protocol_definition_id_fkey` | `protocol_definition_id` → `protocol_definition(id)` |
-
-**No secondary indexes.** 1.x carried `idx_trigger_index_resource` (`resource_type`) and
-`idx_trigger_index_code` (`resource_type, path, code_system, code_value`), but both are leading-column
-prefixes of the composite primary key, which answers their lookups on its own. They cost write
-throughput on every protocol load for no read, so V1 does not create them and the upgrade drops them.
 
 ### Matching Query
 
@@ -611,8 +605,6 @@ Stores FHIR R4 **ActivityDefinition** resources that define what CCE does when a
 | Unique | `action_definition_url_version_key` | `(canonical_url, version)` — Prevents duplicate versions. |
 | Check | — | `status IN ('ACTIVE', 'RETIRED')` |
 | Check | — | `action_type IN ('CommunicationRequest', 'Task', 'ServiceRequest')` |
-| Partial B-tree | `idx_action_definition_status` | `status WHERE status = 'ACTIVE'` — Active definitions for resolution. |
-| B-tree Index | `idx_action_definition_canonical` | `canonical_url` — Lookup by canonical URL. |
 
 ### Canonical Reference
 
@@ -652,11 +644,12 @@ Records each execution of an **intelligence action** (`PlanDefinition.action.act
 | Type | Name | Details |
 |------|------|---------|
 | Primary Key | `intelligence_event_log_pkey` | `id` |
-| B-tree Index | `idx_intel_event_log_action_definition` | `action_definition_id` — All events for an action definition. |
-| B-tree Index | `idx_intel_event_log_protocol_instance` | `protocol_instance_id` — All events for a protocol instance. |
-| Partial B-tree | `idx_intel_event_log_step_instance` | `step_instance_id WHERE step_instance_id IS NOT NULL` |
-| B-tree Index | `idx_intel_event_log_subject` | `subject` — Patient-centric intelligence event queries. |
-| Partial B-tree | `idx_intel_event_log_published` | `published WHERE published = false` — Find unpublished events for retry. |
+| B-tree Index | `idx_intelligence_event_log_action_definition` | `action_definition_id` — all events for an action definition. |
+| B-tree Index | `idx_intelligence_event_log_protocol_instance` | `protocol_instance_id` — all events for a protocol instance. |
+| Partial B-tree | `idx_intelligence_event_log_published` | `published WHERE published = false` — unpublished events, for retry. |
+
+These three are exactly the filters the Compliance Service's API exposes. There is no index on
+`subject` or `step_instance_id`: nothing selects on either.
 
 ### Design Notes
 
@@ -688,6 +681,10 @@ creation, instead of three.
 Other properties they share:
 
 - **Append-only.** Rows are only ever INSERTed, never UPDATEd or DELETEd.
+- **No index beyond the primary key.** Nothing reads these tables in Postgres: the services only
+  INSERT, Debezium snapshots them as a full read and then streams the WAL, and the reconstruction that
+  reads history back runs in ClickHouse against the replicated copy. An index here would be maintained
+  on every status change — the highest write rate in the schema — to serve no query.
 - **No foreign keys, and absent from the ER diagram.** Each references its direct parent by id but
   enforces no constraint, so a history row survives the deletion of what it describes.
 - **No enum CHECKs.** Values are copied from the parent row, which enforces its own. A CHECK here that
@@ -715,7 +712,6 @@ Other properties they share:
 | Type | Name | Details |
 |------|------|---------|
 | Primary Key | `protocol_instance_history_pkey` | `id` |
-| B-tree Index | `idx_protocol_instance_history_instance` | `(protocol_instance_id, changed_at)` — reconstructing one enrolment's transitions in order |
 
 ### step_instance_history
 
@@ -730,7 +726,6 @@ Other properties they share:
 | Type | Name | Details |
 |------|------|---------|
 | Primary Key | `step_instance_history_pkey` | `id` |
-| B-tree Index | `idx_step_instance_history_step` | `(step_instance_id, changed_at)` — same rationale as `protocol_instance_history` |
 
 Both status columns appear on every row, whichever service wrote it: a row is a snapshot of the step
 after the change, not a record of which field moved. A row written by Compliance therefore repeats the
