@@ -544,8 +544,11 @@ Only triggers that contain a `data[]` section produce `trigger_index` entries. *
 |------|------|---------|
 | Composite PK | `trigger_index_pkey` | `(resource_type, path, code_system, code_value, protocol_definition_id, action_id)` |
 | Foreign Key | `trigger_index_protocol_definition_id_fkey` | `protocol_definition_id` → `protocol_definition(id)` |
-| B-tree Index | `idx_trigger_index_resource` | `resource_type` — Resource-type-only matching. |
-| B-tree Index | `idx_trigger_index_code` | `(resource_type, path, code_system, code_value)` — Full structural matching (primary query path). |
+
+**No secondary indexes.** 1.x carried `idx_trigger_index_resource` (`resource_type`) and
+`idx_trigger_index_code` (`resource_type, path, code_system, code_value`), but both are leading-column
+prefixes of the composite primary key, which answers their lookups on its own. They cost write
+throughput on every protocol load for no read, so V1 does not create them and the upgrade drops them.
 
 ### Matching Query
 
