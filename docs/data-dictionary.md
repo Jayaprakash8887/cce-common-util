@@ -3,7 +3,7 @@
 > **Canonical schema reference for the CCE services.**
 > **Database**: PostgreSQL 16 · **Schema**: `public` · **Migrations**: Flyway
 
-The nine tables documented here are mapped by JPA entities in this library
+The ten tables documented here are mapped by JPA entities in this library
 (`org.openphc.cce.common.entity`), so every service that compiles against it sees the same columns,
 types and constraints. That is why the reference lives here rather than in any one service: a column
 described in two places eventually disagrees in two places.
@@ -54,6 +54,8 @@ erDiagram
     PROTOCOL_INSTANCE ||--o{ DEVIATION : "has"
     STEP_INSTANCE ||--o{ STEP_SLA_STATE_TRANSITION : "scheduled for"
     STEP_INSTANCE ||--o{ DEVIATION : "causes"
+    PROTOCOL_INSTANCE ||..o{ PROTOCOL_INSTANCE_HISTORY : "status history"
+    STEP_INSTANCE ||..o{ STEP_INSTANCE_HISTORY : "state history"
     MATCHER_EVENT_LOG ||--o| STEP_INSTANCE : "completes"
     ACTION_DEFINITION ||..o{ INTELLIGENCE_EVENT_LOG : "triggers"
     MATCHER_EVENT_LOG }o--o| FACILITY : "populates"
@@ -137,15 +139,19 @@ erDiagram
         timestamptz updated_at
     }
 
-    AUDIT_LOG {
-        uuid id PK
-        varchar event_category
-        varchar event_type
-        varchar actor
-        varchar resource_type
-        varchar resource_id
-        jsonb details
-        timestamptz timestamp
+    PROTOCOL_INSTANCE_HISTORY {
+        bigserial id PK
+        uuid protocol_instance_id
+        varchar status
+        timestamptz changed_at
+    }
+
+    STEP_INSTANCE_HISTORY {
+        bigserial id PK
+        uuid step_instance_id
+        varchar step_status
+        varchar sla_status
+        timestamptz changed_at
     }
 
     ACTION_DEFINITION {
