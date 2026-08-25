@@ -531,7 +531,7 @@ Only triggers that contain a `data[]` section produce `trigger_index` entries. *
 | Column | Data Type | Nullable | Default | Description |
 |--------|-----------|----------|---------|-------------|
 | `resource_type` | `VARCHAR` | **NOT NULL** | — | FHIR resource type from the trigger's `DataRequirement.type` (e.g., `Encounter`, `Observation`). |
-| `path` | `VARCHAR` | **NOT NULL** | — | The `codeFilter.path` this row was decomposed from (e.g., `type`, `status`, `class`, `serviceType`, `identifier`). |
+| `path` | `VARCHAR` | **NOT NULL** | — | The `codeFilter.path` this row was decomposed from. Must be one the Matcher Service extracts from an event payload — `code`, `class`, `serviceType`, `clinicalStatus`, `verificationStatus`, `type`, `category`, `identifier`, `status` — or the row is indexed and never matched, disabling the whole action's trigger, since Tier 1 requires every codeFilter to match. Empty string for a resource-type-only trigger. |
 | `code_system` | `VARCHAR` | **NOT NULL** | `''` | Code system URI. Empty string = no system specified. |
 | `code_value` | `VARCHAR` | **NOT NULL** | `''` | Code value. Empty string = resource-type-only match (no codeFilter). |
 | `protocol_definition_id` | `UUID` | **NOT NULL** | — | Foreign key → `protocol_definition.id`. |
