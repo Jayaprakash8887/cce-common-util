@@ -310,7 +310,7 @@ Stores FHIR R4 **PlanDefinition** resources that define clinical protocols. Each
 | Primary Key | `protocol_definition_pkey` | `id` |
 | Unique | `protocol_definition_url_version_key` | `(url, version)` — Prevents duplicate protocol versions. |
 | Check | — | `status IN ('ACTIVE', 'RETIRED')` |
-| GIN Index | `idx_protocol_definition_triggers` | `definition` (`jsonb_path_ops`) — Fast JSON path queries. |
+| GIN Index | `idx_protocol_definition` | `definition` (`jsonb_path_ops`) — supports JSON path queries into the stored PlanDefinition. |
 
 ### Canonical Reference
 
@@ -412,13 +412,13 @@ settles every threshold it still has against its `completed_at`. Neither transit
                                            └───────────┘
 ```
 
-Because they are independent, every combination is expressible — including the two the old single
-`state` column could not represent:
+Because they are independent, `COMPLETED` + `MISSED` — written off, then the event arrived anyway — is
+finally expressible. The old single `state` column could not hold both facts at once, which is the
+reason for the split.
 
-| Combination | Meaning |
-|---|---|
-| `COMPLETED` + `MISSED` | Written off, then the event arrived anyway |
-| `NOT_STARTED` + `MET` | Optional step closed out without an event |
+`NOT_STARTED` + `MET` is not a combination 2.0.0 produces. `MET` is only ever written on a completed
+step, and optional steps are no longer pre-created and closed out unused. It survives only in rows
+migrated from a 1.x `SKIPPED` step — see [Reading the pair](#reading-the-pair).
 
 ---
 
@@ -796,7 +796,7 @@ Every combination is meaningful, and `completed_at` / `due_date` are available f
 | `COMPLETED` | `MISSED` | Recorded after being written off |
 | `NOT_STARTED` | *(null)* / `OVERDUE` | Still outstanding |
 | `NOT_STARTED` | `MISSED` | Never recorded; deviation raised |
-| `NOT_STARTED` | `MET` | Optional step closed out without an event |
+| `NOT_STARTED` | `MET` | **1.x rows only** — a migrated `SKIPPED` step: an optional step allowed to lapse, which breached nothing. 2.0.0 never writes this pair, since `MET` is only ever written on a completed step. |
 
 ### DeviationType
 
