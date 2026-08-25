@@ -329,7 +329,7 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | `action_id` | `VARCHAR` | **NOT NULL** | — | Protocol definition `action.id` this step instantiates (e.g., `anc-visit-1`). Must be unique within a PlanDefinition. |
 | `repeat_index` | `INTEGER` | **NOT NULL** | `0` | Zero-based occurrence counter for repeating actions. Non-repeating actions always have index 0. |
 | `step_status` | `VARCHAR` | **NOT NULL** | — | Whether the expected event has been received. See [StepStatus](#stepstatus). |
-| `sla_status` | `VARCHAR` | **NOT NULL** | — | Whether the deadline has been met. See [SlaStatus](#slastatus). |
+| `sla_status` | `VARCHAR` | Yes | — | Whether the deadline has been met. Null until it has been judged — see [SlaStatus](#slastatus). |
 | `completed_at` | `TIMESTAMPTZ` | Yes | — | **Clinical occurrence time** of the completing event (when the act happened), not ingestion time — clamped to `now()`. Drives completion status and dependent steps' due dates. `NULL` for non-completed steps. See clinical event time extraction, in the Matcher Service repo. |
 | `completed_by_source` | `VARCHAR` | Yes | — | CloudEvent `source` that completed this step. |
 | `matched_event_id` | `UUID` | Yes | — | Foreign key → `matcher_event_log.id`. Links to the event that completed this step. |
@@ -354,11 +354,14 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | B-tree Index | `idx_step_instance_protocol` | `protocol_instance_id` — All steps within a protocol instance. |
 | Partial B-tree | `idx_step_instance_sla_status` | `sla_status WHERE sla_status IS NULL OR sla_status = 'OVERDUE'` — steps whose SLA can still move; `MET` and `MISSED` have no threshold left to cross. |
 | Partial B-tree | `idx_step_instance_not_started` | `(protocol_instance_id, action_id) WHERE step_status = 'NOT_STARTED'` — locating the step a late-arriving event should complete. |
+| Partial B-tree | `idx_step_instance_completed_unjudged` | `(id) WHERE step_status = 'COMPLETED' AND completed_at IS NOT NULL AND (sla_status IS NULL OR sla_status = 'OVERDUE')` — completed steps whose SLA is still unsettled. Compliance claims their transition rows from here without waiting for the deadline; a sweep empties the set. |
+| Partial B-tree | `idx_step_instance_matched_event` | `matched_event_id WHERE matched_event_id IS NOT NULL` — steps reached from the event that completed them. |
 
 ### Status Machines
 
 The two statuses advance independently. `step_status` is driven by inbound events; `sla_status` is
-driven by a time threshold being crossed. Neither transition touches the other.
+driven by the thresholds — either one falling due on an outstanding step, or the step completing, which
+settles every threshold it still has against its `completed_at`. Neither transition touches the other.
 
 ```
   step_status (event-driven)              sla_status (time-driven)
@@ -432,16 +435,19 @@ the shared database directly — Matcher is not in that path.
 | Unique | `step_sla_state_transition_step_type_key` | `(step_instance_id, transition_type)` — a step has at most one row per type, making creation idempotent. Its leading column also serves lookups by step, so no separate index on `step_instance_id`. |
 | Foreign key | `..._step_instance_id_fkey` | → `step_instance(id)` |
 | Check | `..._type_check` | `transition_type IN ('DUE_DATE_REACHED', 'MISSED_DATE_REACHED')` |
-| Partial B-tree | `idx_sslt_due` | `next_attempt_at WHERE is_processed = FALSE` — the evaluator's claim path, and the only hot index. Scoped to the pending backlog however large the retained history grows. |
+| Partial B-tree | `idx_sslt_due` | `next_attempt_at WHERE is_processed = FALSE` — the evaluator's deadline-driven claim path, and the only hot index. Scoped to the pending backlog however large the retained history grows. The second claim path, for rows of already-completed steps, drives off `idx_step_instance_completed_unjudged` instead and reaches these rows by `step_instance_id`. |
 
 ### Design Notes
 
 - **Rows outlive the state they were scheduled against.** Matcher only creates rows; it never cancels
-  them when a step completes. The evaluator judges a completed step against `step_instance.completed_at`
-  rather than the wall clock — completed at or after `process_by` is a breach and the transition still
-  fires; completed before it is not, and the row is consumed. Matcher never moves a completed step's
-  `sla_status`, which completion already settled against this same threshold; it only records the
-  deviation for a breach the completion left unrecorded.
+  them when a step completes, and it never writes `sla_status` at all. The evaluator judges a completed
+  step against `step_instance.completed_at` rather than the wall clock — completed at or after
+  `process_by` is a breach and the transition still fires, with its deviation; completed before it is
+  not, and the row is consumed.
+- **A completed step's rows are claimed at once, not at their deadline.** Since the judgement reads only
+  `completed_at` and `process_by`, both already known, waiting for the clock would delay recording an
+  outcome that is already decided. This is why an on-time completion does not read as a null
+  `sla_status` until its due date arrives.
 - **An absent threshold gets no row.** A step created from its own trigger with no `tolerance-days` has
   no `MISSED_DATE_REACHED` row, which is precisely what "this step can never be written off" means.
 - **`process_by` is never rewritten**, so a settled SLA can still be judged against its original
@@ -657,10 +663,10 @@ reflects when the act happened, not when the event was ingested.
 
 | Value | Condition | Transitions From | Transitions To |
 |-------|-----------|-----------------|----------------|
-| *(null)* | No threshold has fallen due, so timeliness has not been judged. Also the permanent state of a step with no due date — no SLA applies. **Not an enum value**: the column is nullable, and null is the initial state. | *(initial)* | `OVERDUE`, `MET` |
+| *(null)* | Nothing to judge on yet: no threshold has fallen due, and the step has not completed either. Transient for a completed step — the next Compliance sweep settles it from `completed_at`. Also the permanent state of a step with no due date, where no SLA applies. **Not an enum value**: the column is nullable, and null is the initial state. | *(initial)* | `OVERDUE`, `MET` |
 | `OVERDUE` | The due threshold fell and the work was not recorded by then. An `OVERDUE` deviation is recorded. | *(null)* | `MISSED` |
 | `MISSED` | Past the missed threshold and the event never arrived. A `MISSED` deviation is recorded. | `OVERDUE` | *(terminal)* |
-| `MET` | The event arrived before the due threshold. Written only from null, on the `DUE_DATE_REACHED` row — a step already found `OVERDUE` is never relabelled as on time. | *(null)* | *(terminal)* |
+| `MET` | The event arrived before the due threshold. Written only from null, on the `DUE_DATE_REACHED` row, which is claimed as soon as the completion is recorded rather than at the due date — a step already found `OVERDUE` is never relabelled as on time. | *(null)* | *(terminal)* |
 
 #### Reading the pair
 
@@ -687,8 +693,8 @@ Every combination is meaningful, and `completed_at` / `due_date` are available f
 ### SlaTransitionType
 
 The transition types Matcher writes to `step_sla_state_transition.transition_type`. One value per
-threshold the SLA lifecycle crosses; there is deliberately none for reaching `MET`, which is settled by
-an event arriving rather than by time passing.
+threshold the SLA lifecycle crosses; there is deliberately none for reaching `MET`, which the due-date
+row settles when it finds the work already recorded.
 
 | Value | Threshold | `sla_status` if the work was recorded in time | if it was not | Deviation on a breach |
 |---|---|---|---|

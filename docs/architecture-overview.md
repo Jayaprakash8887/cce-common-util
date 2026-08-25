@@ -65,16 +65,16 @@ flowchart TB
     end
 
     Admin["Protocol author"] -->|"REST"| PS
-    PS -->|"writes definitions<br/>+ trigger index"| DB[("ccedb<br/>PostgreSQL 16")]
-
     Collector["Inbound clinical events"] -->|"Kafka<br/>cce.events.inbound"| MS
-    MS -->|"reads definitions<br/>writes instances, steps,<br/>SLA schedule"| DB
-
-    CS -->|"claims due transitions,<br/>advances sla_status,<br/>records deviations"| DB
     Clock(["Deadlines falling due"]) -.->|"scheduled poll"| CS
 
-    MS -->|"Kafka<br/>cce.intelligence.triggers"| Intel["cce-intelligence-service"]
-    CS -->|"Kafka<br/>cce.intelligence.triggers"| Intel
+    PS -->|"writes definitions<br/>+ trigger index"| DB[("ccedb<br/>PostgreSQL 16")]
+    MS -->|"reads definitions<br/>writes instances, steps,<br/>SLA schedule"| DB
+    CS -->|" <br/>claims due transitions,<br/>advances sla_status,<br/>records deviations"| DB
+
+    MS --> Topic[/"Kafka<br/>cce.intelligence.triggers"/]
+    CS --> Topic
+    Topic --> Intel["cce-intelligence-service"]
 ```
 
 There is no synchronous call between the three services, and no Kafka hop between them either. They
@@ -134,18 +134,21 @@ column. Splitting them means the pair reads directly: `COMPLETED` + `MISSED` is 
 done, `NOT_STARTED` + `MISSED` is work that did not. `completion_status` was dropped because
 early-versus-late is derivable from the pair.
 
-`sla_status` has **no initial enum value**. The column is nullable, and null means no threshold has
-fallen due, so timeliness has not been judged. The former `PENDING` and `DUE` both said that, and
-saying it with an enum constant made the absence of a judgement look like one that had been made. Null
-is also the permanent state of a step with no due date: no thresholds are scheduled for it, so nothing
-will ever judge it, which is exactly right.
+`sla_status` has **no initial enum value**. The column is nullable, and null means there is nothing to
+judge on yet: no threshold has fallen due, and the step has not been completed either. The former
+`PENDING` and `DUE` both said that, and saying it with an enum constant made the absence of a judgement
+look like one that had been made. Null is also the permanent state of a step with no due date: no
+thresholds are scheduled for it, so nothing will ever judge it, which is exactly right.
 
 Ownership: the Matcher Service writes `step_status` and `completed_at`; the **Compliance Service alone**
 writes `sla_status`. Matcher records that the work happened and when, never whether that was timely —
 so there is no rule about which service may overwrite the other, because only one of them ever writes
-the column. The cost is that an on-time completion reads as null until its due date passes; the gain is
-that a step's SLA has exactly one author and one source of evidence. See
+the column. A step's SLA has exactly one author and one source of evidence. See
 [Data Dictionary §3](data-dictionary.md#3-ownership).
+
+Single ownership does not mean a completion waits for its deadline to be judged. `completed_at` fixes
+the answer the moment it is recorded, so Compliance settles a completed step on its next sweep rather
+than at the threshold — an early completion reads `MET` seconds later, not weeks later. §5 is how.
 
 What each threshold means for a step is the SLA transition contract, in §5.
 
@@ -169,12 +172,18 @@ Claim and apply happen in **one** transaction. Claiming in one and applying in a
 window where a row is marked taken but not yet acted on, which is exactly the state a crash makes
 permanent.
 
-What the applier does depends on the step it finds, because the event may have arrived between the
-row being scheduled and the deadline falling due:
+**A row is claimable for either of two reasons.** Its `next_attempt_at` has passed — the deadline fell
+and the work has to be judged against it. Or its step is already `COMPLETED` with a `completed_at`: then
+nothing about it can change, both thresholds were written at creation, and the deadline arriving later
+would only confirm what is already decided. The two claims are disjoint, so no row is applied twice, and
+the second is what keeps an on-time completion from sitting at null until its due date. It is a cheap
+claim rather than a scan of every step, because `idx_step_instance_completed_unjudged` covers exactly the
+completed-but-unsettled set — which a sweep empties.
 
-The Compliance Service decides what a fallen threshold means by comparing `step_instance.completed_at`
-against the row's `process_by`. It does not consult the wall clock: the row was claimed *because* its
-deadline passed, and all that remains to ask is whether the work had happened by then.
+What the applier does depends on the step it finds, not on when it runs. It compares
+`step_instance.completed_at` against the row's `process_by` and never consults the wall clock, which is
+precisely what makes applying a completed step's rows early give the same verdict as applying them at
+the deadline:
 
 | Row | Step when applied | `sla_status` | Deviation |
 |---|---|---|---|
