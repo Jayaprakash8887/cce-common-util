@@ -382,7 +382,6 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | Check | — | `sla_status IN ('OVERDUE', 'MISSED', 'MET')` — nullable, and null is the unjudged initial state |
 | Check | — | `required_behavior IN ('must', 'could', 'must-unless-documented')` |
 | B-tree Index | `idx_step_instance_protocol` | `protocol_instance_id` — All steps within a protocol instance. |
-| Partial B-tree | `idx_step_instance_sla_status` | `sla_status WHERE sla_status IS NULL OR sla_status = 'OVERDUE'` — steps whose SLA can still move; `MET` and `MISSED` have no threshold left to cross. |
 | Partial B-tree | `idx_step_instance_not_started` | `(protocol_instance_id, action_id) WHERE step_status = 'NOT_STARTED'` — locating the step a late-arriving event should complete. |
 | Partial B-tree | `idx_step_instance_completed_unjudged` | `(id) WHERE step_status = 'COMPLETED' AND completed_at IS NOT NULL AND (sla_status IS NULL OR sla_status = 'OVERDUE')` — completed steps whose SLA is still unsettled. Compliance claims their transition rows from here without waiting for the deadline; a sweep empties the set. |
 | Partial B-tree | `idx_step_instance_matched_event` | `matched_event_id WHERE matched_event_id IS NOT NULL` — steps reached from the event that completed them. |
@@ -415,10 +414,6 @@ settles every threshold it still has against its `completed_at`. Neither transit
 Because they are independent, `COMPLETED` + `MISSED` — written off, then the event arrived anyway — is
 finally expressible. The old single `state` column could not hold both facts at once, which is the
 reason for the split.
-
-`NOT_STARTED` + `MET` is not a combination 2.0.0 produces. `MET` is only ever written on a completed
-step, and optional steps are no longer pre-created and closed out unused. It survives only in rows
-migrated from a 1.x `SKIPPED` step — see [Reading the pair](#reading-the-pair).
 
 ---
 
@@ -796,7 +791,6 @@ Every combination is meaningful, and `completed_at` / `due_date` are available f
 | `COMPLETED` | `MISSED` | Recorded after being written off |
 | `NOT_STARTED` | *(null)* / `OVERDUE` | Still outstanding |
 | `NOT_STARTED` | `MISSED` | Never recorded; deviation raised |
-| `NOT_STARTED` | `MET` | **1.x rows only** — a migrated `SKIPPED` step: an optional step allowed to lapse, which breached nothing. 2.0.0 never writes this pair, since `MET` is only ever written on a completed step. |
 
 ### DeviationType
 
