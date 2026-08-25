@@ -8,10 +8,15 @@ The nine tables documented here are mapped by JPA entities in this library
 types and constraints. That is why the reference lives here rather than in any one service: a column
 described in two places eventually disagrees in two places.
 
-**Not documented here** — four tables whose entities belong to the Matcher Service alone:
-`matcher_event_log`, `facility`, `protocol_instance_history` and `step_instance_history`. They appear
-in the ER diagram below, because they are part of the same database, but their columns are described
-in the Matcher Service repo (`docs/data-dictionary.md`).
+**Not documented here** — two tables whose entities belong to the Matcher Service alone:
+`matcher_event_log` and `facility`. They appear in the ER diagram below, because they are part of the
+same database, but their columns are described in the Matcher Service repo
+(`docs/data-dictionary.md`).
+
+The two state-transition history tables *are* documented here, in
+[§12](#12-state-transition-history-tables). Their entities moved into this library in 2.0.0 when the
+Compliance Service began recording the `sla_status` transitions it applies, so they stopped belonging
+to any one service.
 
 For which service *creates* and which service *writes* each table, see
 [§3 Ownership](#3-ownership). For why the boundary falls where it does, see
@@ -32,9 +37,10 @@ For which service *creates* and which service *writes* each table, see
 9. [trigger_index](#9-trigger_index)
 10. [action_definition](#10-action_definition)
 11. [intelligence_event_log](#11-intelligence_event_log)
-12. [Enumerated Value Reference](#12-enumerated-value-reference)
-13. [Relationships & Foreign Keys](#13-relationships--foreign-keys)
-14. [JSONB Column Schemas](#14-jsonb-column-schemas)
+12. [State-Transition History Tables](#12-state-transition-history-tables)
+13. [Enumerated Value Reference](#13-enumerated-value-reference)
+14. [Relationships & Foreign Keys](#14-relationships--foreign-keys)
+15. [JSONB Column Schemas](#15-jsonb-column-schemas)
 
 ---
 
@@ -201,8 +207,10 @@ erDiagram
 | 4 | `step_sla_state_transition` | Each step's SLA schedule — one row per threshold | Medium–High |
 | 5 | `deviation` | Recorded protocol deviations | Medium |
 | 6 | `trigger_index` | Inverted index for fast Tier 1 structural event matching | Low (per protocol load) |
-| 8 | `action_definition` | FHIR ActivityDefinition resources for intelligence actions | Low (tens) |
-| 9 | `intelligence_event_log` | Intelligence action execution and evaluation context (flat, no FKs) | Medium–High |
+| 7 | `action_definition` | FHIR ActivityDefinition resources for intelligence actions | Low (tens) |
+| 8 | `intelligence_event_log` | Intelligence action execution and evaluation context (flat, no FKs) | Medium–High |
+| 9 | `protocol_instance_history` | Append-only log of every `protocol_instance.status` transition | High (per status change) |
+| 10 | `step_instance_history` | Append-only log of every `step_status` / `sla_status` transition | High (per status change) |
 
 ---
 
@@ -225,6 +233,8 @@ log that duplicated half of them without the other half's detail.
 | `step_sla_state_transition` | Matcher | Matcher (inserts), Compliance (claims) | both |
 | `deviation` | Matcher | Matcher, Compliance | both |
 | `intelligence_event_log` | Matcher | Matcher, Compliance | Compliance |
+| `protocol_instance_history` | Matcher | Matcher | — (CDC only) |
+| `step_instance_history` | Matcher | Matcher, Compliance | — (CDC only) |
 
 Each service keeps its own Flyway history table — `flyway_schema_history_protocol` and
 `flyway_schema_history_matcher` — so neither ledger sees the other's migrations. The Compliance
@@ -625,7 +635,88 @@ Records each execution of an **intelligence action** (`PlanDefinition.action.act
 - **Fat event pattern:** The `event_payload` JSONB column stores the complete Kafka event, making each row self-contained — anything reading this table sees exactly what was published, without joining other tables.
 - **`published` boolean:** A simple boolean tracks whether the event was successfully sent to Kafka.
 
-## 12. Enumerated Value Reference
+## 12. State-Transition History Tables
+
+Append-only logs recording **every** transition of the UPDATE-in-place lifecycle columns. They exist
+because `protocol_instance.status` and `step_instance.step_status` / `sla_status` are overwritten in
+place — the prior value is lost — so point-in-time analytics ("what state was this on date D") and
+historical rebuilds of the ClickHouse daily-summary MVs are otherwise impossible.
+
+Written by the shared
+[`StateTransitionHistoryService`](library-reference.md#statetransitionhistoryservice), invoked
+immediately after every status write. The INSERT runs with `Propagation.MANDATORY`, inside the
+caller's transaction, so it is atomic with the transition it records and there is no window where one
+exists without the other. The caveat is the same one that atomicity buys: out-of-band SQL `UPDATE`s
+are not captured, so every lifecycle mutation must go through the service layer.
+
+**Two writers, and that is safe here.** The Matcher Service records enrolment, step creation and
+completion; the Compliance Service records each `sla_status` it applies. Append-only is what makes
+that work — the two insert disjoint rows and neither updates the other's, so unlike `step_instance`
+there is no column to divide between them. Until 2.0.0 only Matcher wrote here, and every time-driven
+transition was missing as a result: a step that went overdue and was never completed had one row, its
+creation, instead of three.
+
+Other properties they share:
+
+- **Append-only.** Rows are only ever INSERTed, never UPDATEd or DELETEd.
+- **No foreign keys, and absent from the ER diagram.** Each references its direct parent by id but
+  enforces no constraint, so a history row survives the deletion of what it describes.
+- **No enum CHECKs.** Values are copied from the parent row, which enforces its own. A CHECK here that
+  lagged a future enum change would reject the parent write.
+- **CDC-synced to ClickHouse** — added to `cce_analytics_pub` and granted in the data-pipeline's
+  `cdc/01-configure-replication.sql`, not in the schema migration. Append-only, so the default PK
+  replica identity suffices.
+- **Lean schema — no denormalized grouping keys.** Each carries only its direct parent id; the backfill
+  recovers `protocol_definition_id` (protocol history) and `protocol_instance_id` (step history) by
+  joining the base tables. Trade-off: a hard-deleted base row leaves its history ungroupable, and it
+  drops out of the backfill. Accepted — a deleted instance is treated as removed from historical
+  rollups too.
+- Consumed **only** by the historical-backfill job (`data-pipeline/schema/09-historical-backfill.sql`),
+  run after a full re-snapshot. Normal forward operation never reads them.
+
+### protocol_instance_history
+
+| Column | Data Type | Nullable | Default | Description |
+|--------|-----------|----------|---------|-------------|
+| `id` | `BIGSERIAL` | **NOT NULL** | sequence | Primary key, and insertion order. |
+| `protocol_instance_id` | `UUID` | **NOT NULL** | — | The enrolment whose status changed. No FK. Backfill joins `protocol_instance` on it to recover `protocol_definition_id`. |
+| `status` | `VARCHAR` | **NOT NULL** | — | The status *after* this transition. See [ProtocolInstanceStatus](#protocolinstancestatus). |
+| `changed_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | When the transition took effect. Caller-supplied rather than stamped on insert: the initial row receives `protocol_instance.enrolled_at`, which is the clinical occurrence time of the enrolling event, not the moment the row was written. |
+
+| Type | Name | Details |
+|------|------|---------|
+| Primary Key | `protocol_instance_history_pkey` | `id` |
+| B-tree Index | `idx_protocol_instance_history_instance` | `(protocol_instance_id, changed_at)` — reconstructing one enrolment's transitions in order |
+
+### step_instance_history
+
+| Column | Data Type | Nullable | Default | Description |
+|--------|-----------|----------|---------|-------------|
+| `id` | `BIGSERIAL` | **NOT NULL** | sequence | Primary key, and insertion order. |
+| `step_instance_id` | `UUID` | **NOT NULL** | — | The step whose state changed. No FK. Backfill joins `step_instance` on it to recover `protocol_instance_id`. |
+| `step_status` | `VARCHAR` | **NOT NULL** | — | The step status *after* this transition. See [StepStatus](#stepstatus). Written by the Matcher Service. |
+| `sla_status` | `VARCHAR` | Yes | — | The SLA status *after* this transition. See [SlaStatus](#slastatus). **Nullable**, mirroring the column it copies: null on any row recorded before a threshold had fallen due, and on every row of a step with no SLA. Written by the Compliance Service. |
+| `changed_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | When the transition was **recorded**. Caller-supplied, but every call site passes a processing timestamp: `step_instance.created_at` for the initial row, and `now()` for a completion or an SLA write. See the note below — this is not the clinical time. |
+
+| Type | Name | Details |
+|------|------|---------|
+| Primary Key | `step_instance_history_pkey` | `id` |
+| B-tree Index | `idx_step_instance_history_step` | `(step_instance_id, changed_at)` — same rationale as `protocol_instance_history` |
+
+Both status columns appear on every row, whichever service wrote it: a row is a snapshot of the step
+after the change, not a record of which field moved. A row written by Compliance therefore repeats the
+`step_status` Matcher last set, and vice versa.
+
+**`changed_at` is ingestion time, not clinical time.** Unlike `protocol_instance_history`, whose first
+row carries the enrolment's occurrence time, every `step_instance_history` row is stamped with when the
+write happened. A completion row therefore says when the event was processed, while the clinical moment
+the work occurred lives in `step_instance.completed_at`; for a backdated event the two can be far apart.
+A point-in-time reconstruction that needs clinical ordering must join `step_instance` for
+`completed_at` rather than trusting `changed_at` alone.
+
+---
+
+## 13. Enumerated Value Reference
 
 ### ProtocolDefinitionStatus
 
@@ -734,7 +825,7 @@ The `intelligence_destination` field on `intelligence_event_log` is a **free-for
 
 ---
 
-## 13. Relationships & Foreign Keys
+## 14. Relationships & Foreign Keys
 
 | Parent Table | Child Table | FK Column | Cascade | Description |
 |-------------|-------------|-----------|---------|-------------|
@@ -753,7 +844,7 @@ The `intelligence_destination` field on `intelligence_event_log` is a **free-for
 
 ---
 
-## 14. JSONB Column Schemas
+## 15. JSONB Column Schemas
 
 ### protocol_definition — `definition`
 

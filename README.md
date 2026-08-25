@@ -25,11 +25,11 @@ it is the shared context the three service repositories build on and do not rest
 
 ```
 org.openphc.cce.common
-├── entity/      9 shared tables (+ one composite key type)
+├── entity/      10 shared tables (+ one composite key type)
 ├── repository/  Spring Data interfaces for them
 ├── fhir/        PlanDefinitionParser, ParsedProtocolCache, expression evaluation
 ├── service/     IntelligenceActionEvaluator, DeviationService, SlaThresholdReader,
-│                ActionDefinitionResolver, AuditService
+│                ActionDefinitionResolver, StateTransitionHistoryService
 ├── enums/       the shared vocabularies (StepStatus, SlaStatus, DeviationType, …)
 ├── event/       CloudEvents envelope and the intelligence trigger payload
 ├── kafka/       IntelligenceTriggerProducer, topic properties

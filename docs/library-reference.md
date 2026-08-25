@@ -36,7 +36,7 @@ Build wiring is covered in [Developer Setup](developer-setup.md).
 
 ## 1. `entity` — the shared persistence model
 
-Ten types mapping nine tables (`TriggerIndexId` is `TriggerIndex`'s composite key).
+Eleven types mapping ten tables (`TriggerIndexId` is `TriggerIndex`'s composite key).
 
 | Entity | Table |
 |---|---|
