@@ -384,7 +384,14 @@ public class PlanDefinitionParser {
     }
 
     /**
-     * Validate triggers at load time. Rejects any trigger that has no data[] AND no condition.
+     * Validate triggers at load time. Rejects any trigger that has no data[] AND no condition, and any
+     * {@code codeFilter.path} the Matcher Service cannot extract from an event payload.
+     *
+     * <p>The path check is the one that has to happen here rather than at match time. An unmatchable
+     * path is indexed like any other and then never matched, and since Tier 1 requires every codeFilter
+     * of an action to match, it disables that action's trigger rather than loosening it — a protocol
+     * that loads cleanly, reports its trigger rows, and silently never enrols anyone. Load is the last
+     * moment anyone is looking.
      *
      * @throws IllegalArgumentException if an invalid trigger is found
      */
@@ -469,12 +476,34 @@ public class PlanDefinitionParser {
                         "Action '" + action.getId() + "' has a trigger with no data[] and no condition. " +
                                 "At least one of data[] or condition must be present.");
             }
+            validateCodeFilterPaths(action, trigger);
         }
 
         // Recursively validate nested steps
         for (PlanDefinition.PlanDefinitionActionComponent nestedAction : action.getAction()) {
             if (isStepAction(nestedAction)) {
                 validateActionTriggers(nestedAction);
+            }
+        }
+    }
+
+    private void validateCodeFilterPaths(PlanDefinition.PlanDefinitionActionComponent action,
+                                         TriggerDefinition trigger) {
+        for (DataRequirement dataReq : trigger.getData()) {
+            List<DataRequirement.DataRequirementCodeFilterComponent> codeFilters = dataReq.getCodeFilter();
+            if (codeFilters == null) {
+                continue;
+            }
+            for (DataRequirement.DataRequirementCodeFilterComponent cf : codeFilters) {
+                String path = cf.getPath();
+                if (!TriggerPath.isMatchable(path)) {
+                    throw new IllegalArgumentException(
+                            "Action '" + action.getId() + "' has a trigger on codeFilter.path '" + path
+                                    + "', which no event payload is read for, so the trigger could never "
+                                    + "match — and because every codeFilter of an action must match, the "
+                                    + "whole action would never fire. Matchable paths: "
+                                    + TriggerPath.matchablePaths() + ".");
+                }
             }
         }
     }

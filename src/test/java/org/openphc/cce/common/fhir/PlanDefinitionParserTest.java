@@ -253,6 +253,62 @@ class PlanDefinitionParserTest {
     }
 
     @Test
+    void validateTriggers_codeFilterPathNoEventIsReadFor_throws() {
+        // The failure this check exists for: an unmatchable path is indexed like any other and then
+        // never matched, and since every codeFilter of an action must match, it takes the whole action
+        // down with it. A protocol that loads cleanly and silently never enrols anyone is worse than one
+        // that is refused, so it is refused.
+        PlanDefinition pd = new PlanDefinition();
+        PlanDefinition.PlanDefinitionActionComponent action = stepAction(pd.addAction(), "enrol-on-bodysite");
+        codeFilterTrigger(action, "Observation", "bodySite", "http://snomed.info/sct", "1234");
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> parser.validateTriggers(pd));
+        assertTrue(ex.getMessage().contains("enrol-on-bodysite"));
+        assertTrue(ex.getMessage().contains("bodySite"));
+        assertTrue(ex.getMessage().contains("serviceType"),
+                "the message has to name the paths that would have worked");
+    }
+
+    @Test
+    void validateTriggers_serviceTypePath_isAccepted() {
+        // The reference ANC protocol's enrolment trigger. Rejecting this would reject the fixture.
+        PlanDefinition pd = new PlanDefinition();
+        PlanDefinition.PlanDefinitionActionComponent action = stepAction(pd.addAction(), "initial-enrollment");
+        codeFilterTrigger(action, "Encounter", "serviceType",
+                "http://openphc.org/service-types", "high-risk-anc");
+
+        assertDoesNotThrow(() -> parser.validateTriggers(pd));
+    }
+
+    @Test
+    void validateTriggers_resourceTypeOnlyTrigger_isAccepted() {
+        // An empty path is how "match on resource type alone" is expressed, and the matching query
+        // depends on it. The path check must not mistake it for an unmatchable field.
+        PlanDefinition pd = new PlanDefinition();
+        PlanDefinition.PlanDefinitionActionComponent action = stepAction(pd.addAction(), "any-encounter-log");
+        TriggerDefinition trigger = action.addTrigger();
+        trigger.setType(TriggerDefinition.TriggerType.NAMEDEVENT);
+        trigger.addData().setType("Encounter");
+
+        assertDoesNotThrow(() -> parser.validateTriggers(pd));
+    }
+
+    @Test
+    void validateTriggers_unmatchablePathOnANestedSubStep_throws() {
+        // Sub-step triggers are indexed with their own action id, so they can be as dead as a top-level
+        // one and the check has to reach them.
+        PlanDefinition pd = new PlanDefinition();
+        PlanDefinition.PlanDefinitionActionComponent parent = stepAction(pd.addAction(), "parent");
+        PlanDefinition.PlanDefinitionActionComponent child = stepAction(parent.addAction(), "nested-child");
+        codeFilterTrigger(child, "Procedure", "performerType", "http://snomed.info/sct", "9999");
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> parser.validateTriggers(pd));
+        assertTrue(ex.getMessage().contains("nested-child"));
+    }
+
+    @Test
     void extractConditionOnlyTriggers_descendsIntoSubSteps() {
         // buildTriggerIndexEntries and validateActionTriggers both recurse, so a sub-step whose only
         // trigger is a condition passes load-time validation. If this collector did not recurse too,
@@ -349,6 +405,17 @@ class PlanDefinitionParserTest {
                 .setSystem("http://openphc.org/fhir/CodeSystem/action-type")
                 .setCode("step"));
         return action;
+    }
+
+    private void codeFilterTrigger(PlanDefinition.PlanDefinitionActionComponent action,
+                                   String resourceType, String path, String system, String code) {
+        TriggerDefinition trigger = action.addTrigger();
+        trigger.setType(TriggerDefinition.TriggerType.NAMEDEVENT);
+        trigger.addData()
+                .setType(resourceType)
+                .addCodeFilter()
+                .setPath(path)
+                .addCode(new Coding().setSystem(system).setCode(code));
     }
 
     private void conditionOnlyTrigger(PlanDefinition.PlanDefinitionActionComponent action,
