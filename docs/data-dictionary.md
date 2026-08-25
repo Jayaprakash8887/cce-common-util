@@ -3,15 +3,16 @@
 > **Canonical schema reference for the CCE services.**
 > **Database**: PostgreSQL 16 · **Schema**: `public` · **Migrations**: Flyway
 
-The ten tables documented here are mapped by JPA entities in this library
+The ten tables described **column by column** here are mapped by JPA entities in this library
 (`org.openphc.cce.common.entity`), so every service that compiles against it sees the same columns,
 types and constraints. That is why the reference lives here rather than in any one service: a column
 described in two places eventually disagrees in two places.
 
-**Not documented here** — two tables whose entities belong to the Matcher Service alone:
-`matcher_event_log` and `facility`. They appear in the ER diagram below, because they are part of the
-same database, but their columns are described in the Matcher Service repo
-(`docs/data-dictionary.md`).
+`matcher_event_log` and `facility` are mapped by the Matcher Service alone, so their **columns** are
+described in the Matcher Service repo (`docs/data-dictionary.md`) and not repeated here. They are still
+part of the same database, so they appear in the ER diagram, the table summary and the ownership table
+below: a reader asking "what is in `ccedb` and who writes it" should not have to know which repo an
+entity happens to live in to get a complete answer.
 
 The two state-transition history tables *are* documented here, in
 [§12](#12-state-transition-history-tables). Their entities moved into this library in 2.0.0 when the
@@ -51,7 +52,6 @@ erDiagram
     PROTOCOL_DEFINITION ||--o{ PROTOCOL_INSTANCE : "defines"
     PROTOCOL_DEFINITION ||--o{ TRIGGER_INDEX : "indexed by"
     PROTOCOL_INSTANCE ||--o{ STEP_INSTANCE : "contains"
-    PROTOCOL_INSTANCE ||--o{ DEVIATION : "has"
     STEP_INSTANCE ||--o{ STEP_SLA_STATE_TRANSITION : "scheduled for"
     STEP_INSTANCE ||--o{ DEVIATION : "causes"
     PROTOCOL_INSTANCE ||..o{ PROTOCOL_INSTANCE_HISTORY : "status history"
@@ -110,7 +110,6 @@ erDiagram
 
     DEVIATION {
         uuid id PK
-        uuid protocol_instance_id FK
         uuid step_instance_id FK
         varchar deviation_type
         timestamptz detected_at
@@ -217,6 +216,13 @@ erDiagram
 | 8 | `intelligence_event_log` | Intelligence action execution and evaluation context (flat, no FKs) | Medium–High |
 | 9 | `protocol_instance_history` | Append-only log of every `protocol_instance.status` transition | High (per status change) |
 | 10 | `step_instance_history` | Append-only log of every `step_status` / `sla_status` transition | High (per status change) |
+| 11 | `matcher_event_log` † | Lean idempotency log of every inbound CloudEvent and its processing outcome | High (every event) |
+| 12 | `facility` † | Reference lookup of known facilities — auto-populated from inbound event payloads | Low (one row per facility) |
+
+† Columns documented in the Matcher Service repo
+([`matcher_event_log`](../../cce-matcher-service/docs/data-dictionary.md#2-matcher_event_log),
+[`facility`](../../cce-matcher-service/docs/data-dictionary.md#3-facility)), which is where their
+entities live. Everything else on this page covers rows 1-10.
 
 ---
 
@@ -241,6 +247,14 @@ log that duplicated half of them without the other half's detail.
 | `intelligence_event_log` | Matcher | Matcher, Compliance | Compliance |
 | `protocol_instance_history` | Matcher | Matcher | — (CDC only) |
 | `step_instance_history` | Matcher | Matcher, Compliance | — (CDC only) |
+| `matcher_event_log` | Matcher | Matcher | Matcher |
+| `facility` | Matcher | Matcher, programme staff (direct SQL) | Matcher |
+
+The last two are the Matcher Service's alone on every axis — it runs their DDL, writes them and is the
+only service that reads them. `matcher_event_log` is its idempotency guard, and nothing outside it has a
+reason to consult which events have already been processed. `facility` is the one table with a writer
+that is not a service: programme staff set `district_name` and `expected_patients_per_day` directly in
+the database, and the Matcher Service never touches those two columns.
 
 Each service keeps its own Flyway history table — `flyway_schema_history_protocol` and
 `flyway_schema_history_matcher` — so neither ledger sees the other's migrations. The Compliance
@@ -838,7 +852,6 @@ The `intelligence_destination` field on `intelligence_event_log` is a **free-for
 | `protocol_definition` | `protocol_instance` | `protocol_definition_id` | No cascade | Deletion prevented if instances exist. |
 | `protocol_definition` | `trigger_index` | `protocol_definition_id` | Application-managed | Maintained by the CCE Protocol Service, which owns both tables. |
 | `protocol_instance` | `step_instance` | `protocol_instance_id` | No cascade | Steps are loaded and written through their own repository; there is no JPA cascade from the parent. |
-| `protocol_instance` | `deviation` | `protocol_instance_id` | No cascade | Same — no cascade from the parent. |
 | `step_instance` | `deviation` | `step_instance_id` | No cascade (DB level) | Reference only; not cascade-deleted. |
 | `step_instance` | `step_sla_state_transition` | `step_instance_id` | No cascade | One row per scheduled SLA threshold; retained after processing as the transition record. |
 | `matcher_event_log` | `step_instance` | `matched_event_id` | No cascade | Links completed step to triggering event. |
