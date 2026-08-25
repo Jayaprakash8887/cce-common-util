@@ -487,7 +487,13 @@ the shared database directly — Matcher is not in that path.
 
 ## 8. deviation
 
-Records **matcher deviations** detected during protocol execution. Created when a step transitions to `MISSED`, or when an order violation is detected on completion. When intelligence actions are configured on the step's PlanDefinition action, the `IntelligenceActionEvaluator` is invoked and the `intelligence_event_id` is populated with the published event's UUID.
+Records **protocol deviations** — three kinds, written by two services.
+
+- **`OVERDUE`** — the Compliance Service raises one when a step's due date is applied and the work was not recorded in time. The most common deviation by far: every step that passes its due date unrecorded takes one, including optional (`could`) steps, because running late is a reportable fact about them.
+- **`MISSED`** — the Compliance Service raises one when a `must` step passes its missed date still unrecorded. Mandatory-only: an optional step breaches nothing by never arriving, so it takes no `MISSED` deviation and no `MISSED` status.
+- **`ORDER_VIOLATION`** — the Matcher Service raises one when a step completes while a mandatory prerequisite is still outstanding. The only deviation detected from an event rather than from a deadline, which is why it belongs to Matcher.
+
+When intelligence actions are configured on the step's PlanDefinition action, the `IntelligenceActionEvaluator` is invoked and the `intelligence_event_id` is populated with the published event's UUID.
 
 A step has **at most one deviation per type** — enforced by the `deviation_step_type_key` unique constraint on `(step_instance_id, deviation_type)`. This makes deviation creation idempotent against a retried evaluation and concurrent threads: `DeviationService.createDeviation` pre-checks for an existing deviation and returns it instead of inserting a duplicate, with the unique constraint as the ultimate backstop. It returns a `DeviationResult(deviation, created)`; the `created` flag lets callers fire one-time side effects (intelligence action evaluation) **only** when a new deviation was actually inserted, so a redelivered or concurrent trigger produces neither a duplicate deviation row nor a duplicate intelligence event.
 
