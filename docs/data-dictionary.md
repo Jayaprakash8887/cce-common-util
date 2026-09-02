@@ -8,11 +8,12 @@ The ten tables described **column by column** here are mapped by JPA entities in
 types and constraints. That is why the reference lives here rather than in any one service: a column
 described in two places eventually disagrees in two places.
 
-`matcher_event_log` and `facility` are mapped by the Matcher Service alone, so their **columns** are
-described in the Matcher Service repo (`docs/data-dictionary.md`) and not repeated here. They are still
-part of the same database, so they appear in the ER diagram, the table summary and the ownership table
-below: a reader asking "what is in `ccedb` and who writes it" should not have to know which repo an
-entity happens to live in to get a complete answer.
+Three tables in the same database are mapped elsewhere, so their **columns** are described in the repo
+that owns them and not repeated here: `matcher_event_log` and `facility` in the Matcher Service, and
+`inbound_event_log` in the Collector Service, which does not use this library at all. They still appear
+in the ER diagram, the table summary and the ownership table below: a reader asking "what is in `ccedb`
+and who writes it" should not have to know which repo an entity happens to live in to get a complete
+answer.
 
 The two state-transition history tables *are* documented here, in
 [§12](#12-state-transition-history-tables). Their entities moved into this library in 2.0.0 when the
@@ -59,6 +60,7 @@ erDiagram
     MATCHER_EVENT_LOG ||--o| STEP_INSTANCE : "completes"
     ACTION_DEFINITION ||..o{ INTELLIGENCE_EVENT_LOG : "triggers"
     MATCHER_EVENT_LOG }o--o| FACILITY : "populates"
+    INBOUND_EVENT_LOG ||..o| MATCHER_EVENT_LOG : "same CloudEvent"
 
     PROTOCOL_DEFINITION {
         uuid id PK
@@ -125,6 +127,20 @@ erDiagram
         varchar code_value PK
         uuid protocol_definition_id PK
         varchar action_id PK
+    }
+
+    INBOUND_EVENT_LOG {
+        uuid id PK
+        varchar cloudevents_id UK
+        varchar source UK
+        varchar correlation_id
+        jsonb raw_payload
+        varchar status
+        varchar rejection_reason
+        text error_details
+        timestamptz event_time
+        timestamptz received_at
+        timestamptz updated_at
     }
 
     MATCHER_EVENT_LOG {
@@ -218,18 +234,25 @@ erDiagram
 | 10 | `step_instance_history` | Append-only log of every `step_status` / `sla_status` transition | High (per status change) |
 | 11 | `matcher_event_log` † | Lean idempotency log of every inbound CloudEvent and its processing outcome | High (every event) |
 | 12 | `facility` † | Reference lookup of known facilities — auto-populated from inbound event payloads | Low (one row per facility) |
+| 13 | `inbound_event_log` ‡ | Every CloudEvent the Collector Service accepted or rejected, with its raw payload — the ingestion audit trail and deduplication key | High (every event) |
 
 † Columns documented in the Matcher Service repo
 ([`matcher_event_log`](../../cce-matcher-service/docs/data-dictionary.md#2-matcher_event_log),
 [`facility`](../../cce-matcher-service/docs/data-dictionary.md#3-facility)), which is where their
-entities live. Everything else on this page covers rows 1-10.
+entities live.
+
+‡ Columns documented in the
+[Collector Service repo](../../cce-collector-service/docs/data-dictionary.md#1-database-tables).
+
+Everything else on this page covers rows 1-10.
 
 ---
 
 ## 3. Ownership
 
-One database, `ccedb`, shared by three services. Two rules keep that safe: exactly one service runs
-the DDL for a table, and exactly one service writes any given column.
+One database, `ccedb`, shared by four services — the three built on this library, plus the Collector
+Service, which owns `inbound_event_log` and uses no shared library at all. Two rules keep that safe:
+exactly one service runs the DDL for a table, and exactly one service writes any given column.
 
 There is no `audit_log`. It was dropped in 2.0.0: the append-only history tables already carry state
 transitions, and actor attribution is planned to move onto the domain tables rather than a parallel
@@ -249,17 +272,31 @@ log that duplicated half of them without the other half's detail.
 | `step_instance_history` | Matcher | Matcher, Compliance | — (CDC only) |
 | `matcher_event_log` | Matcher | Matcher | Matcher |
 | `facility` | Matcher | Matcher, programme staff (direct SQL) | Matcher |
+| `inbound_event_log` | Collector | Collector | — (CDC only) |
 
-The last two are the Matcher Service's alone on every axis — it runs their DDL, writes them and is the
-only service that reads them. `matcher_event_log` is its idempotency guard, and nothing outside it has a
-reason to consult which events have already been processed. `facility` is the one table with a writer
-that is not a service: programme staff set `district_name` and `expected_patients_per_day` directly in
-the database, and the Matcher Service never touches those two columns.
+`matcher_event_log` and `facility` are the Matcher Service's alone on every axis — it runs their DDL,
+writes them and is the only service that reads them. `matcher_event_log` is its idempotency guard, and
+nothing outside it has a reason to consult which events have already been processed. `facility` is the
+one table with a writer that is not a service: programme staff set `district_name` and
+`expected_patients_per_day` directly in the database, and the Matcher Service never touches those two
+columns.
 
-Each service keeps its own Flyway history table — `flyway_schema_history_protocol` and
-`flyway_schema_history_matcher` — so neither ledger sees the other's migrations. The Compliance
-Service creates no tables and runs Flyway not at all; it validates the mapping it was given
-(`ddl-auto: validate`) and fails fast if the schema it needs is absent.
+`inbound_event_log` is the Collector Service's, written on the way in and never read back by any
+service — the Matcher Service keeps its own record of what it consumed in `matcher_event_log`. The two
+hold the same CloudEvent under the same natural key, `(cloudevents_id, source)`, unique in both, which
+is what lets an event be traced from the front door to the steps it completed without a foreign key
+between them.
+
+The Protocol and Matcher services keep their own Flyway history tables —
+`flyway_schema_history_protocol` and `flyway_schema_history_matcher` — so neither ledger sees the
+other's migrations. The Compliance Service creates no tables and runs Flyway not at all; it validates
+the mapping it was given (`ddl-auto: validate`) and fails fast if the schema it needs is absent.
+
+The Collector Service sets no `spring.flyway.table`, so its ledger is the **default**
+`flyway_schema_history` — the same name the pre-split monolith used. On a greenfield database that is
+merely inconsistent; on one upgraded from 1.x, where the monolith's ledger is deliberately left in
+place, the collector's Flyway meets a history table full of migrations that are not its own. Worth
+giving it a named ledger like the other two.
 
 ### The shared tables
 
@@ -1014,12 +1051,11 @@ Captures the full runtime variable map that was passed to the condition expressi
 | `completedAt` | String | When set | ISO-8601 `OffsetDateTime` of completion |
 | `dueDate` | String | When set | ISO-8601 `OffsetDateTime` of step due date |
 | `stepStatus` | String | Always | `not-started` or `completed` |
-| `slaStatus` | String | Always | `pending`, `overdue`, `missed`, or `met` |
+| `slaStatus` | String | When judged | `overdue`, `missed`, or `met`. Absent while the step's timeliness has not been judged — 2.0.0 has no `pending`; the absence is the unjudged state, and a JSONLogic rule comparing `slaStatus` to a string simply does not match. |
 
 **Examples:**
 
 | Trigger Reason | Example |
 |----------------|---------|
-| Deviation (missed) | `{"stepStatus": "not-started",
-"slaStatus": "missed", "deviationType": "missed", "actionId": "anc-visit-2", "repeatIndex": 0, "dueDate": "2026-03-01T00:00:00Z", "daysOverdue": 5}` |
+| Deviation (missed) | `{"stepStatus": "not-started", "slaStatus": "missed", "deviationType": "missed", "actionId": "anc-visit-2", "repeatIndex": 0, "dueDate": "2026-03-01T00:00:00Z", "daysOverdue": 5}` |
 | Completion | `{"stepStatus": "completed", "slaStatus": "overdue", "actionId": "anc-visit-2", "repeatIndex": 0, "completedAt": "2026-03-09T14:30:00Z", "dueDate": "2026-03-07T00:00:00Z"}` |
