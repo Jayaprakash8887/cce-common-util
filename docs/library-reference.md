@@ -151,7 +151,8 @@ stamps `inbound_event_log.event_time` with it, and the Matcher Service bases a c
 `completed_at` — and therefore its SLA verdict and every dependent step's due date — on it. They held
 separate copies until 2.0.0, and the copies had drifted: for an `Encounter` carrying both bounds, the
 collector read `period.end` while the matcher read `period.start`, so the audit trail and the SLA
-clock disagreed about when the visit happened.
+clock disagreed about when the visit happened. The two tables were reconciled by hand first, which is
+why the move itself changed no behaviour — holding one copy is what stops them drifting again.
 
 ### `ExpressionEvaluationService`
 

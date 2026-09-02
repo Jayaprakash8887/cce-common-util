@@ -25,7 +25,7 @@ The coverage report lands at `build/reports/jacoco/test/html/index.html`.
 
 ## Consuming it from a service
 
-The three services wire it in as a **composite build**, so a change here is picked up by the next
+All four consumers wire it in as a **composite build**, so a change here is picked up by the next
 service build without a publish step:
 
 ```groovy
@@ -67,9 +67,16 @@ that only ever had one caller.
 
 Two consequences worth keeping in mind when adding to it:
 
-- Every consumer instantiates every bean declared here, because they widen their component scan to
-  `org.openphc.cce`. A new `@Service` appears in all three services whether they use it or not.
+- The Protocol, Matcher and Compliance services instantiate every bean declared here, because they
+  widen their component scan to `org.openphc.cce`. A new `@Service` appears in all three whether they
+  use it or not.
 - A new `@ConfigurationProperties` or `@Value` default becomes live configuration in all three.
+- The Collector Service is the exception, and the reason the distinction matters: it imports
+  `FhirConfig`, `ClinicalEventTimeExtractor` and `KafkaTopicProperties` by name in a
+  `CommonUtilConfig`, so nothing else here reaches it. It owns one table and should not hold the
+  runtime plane's entities and repositories — and a full scan would replace the `ObjectMapper` Spring
+  Boot configures for its HTTP layer and add a second `GlobalExceptionHandler` beside its own. Adding
+  a bean here does not reach that service; adding one it needs means adding it to that import list.
 
 ## Adding a shared entity
 

@@ -26,8 +26,10 @@ import java.util.function.Function;
  * step's {@code completedAt} on it — and therefore the due/overdue/missed dates of dependent steps — so
  * that ingestion lag (offline sync, batch upload, retries, DLQ replay) does not shift downstream
  * schedules or deviation timing. It lives here because they held separate copies whose candidate orders
- * had drifted: for an Encounter carrying both bounds, one read {@code period.start} and the other
- * {@code period.end}, so the audit trail and the SLA clock disagreed about when the visit happened.
+ * had drifted: for an Encounter carrying both bounds, the collector read {@code period.end} while the
+ * matcher read {@code period.start}, so the audit trail and the SLA clock disagreed about when the
+ * visit happened. The two tables were reconciled by hand before this class moved; one copy is what
+ * keeps them reconciled.
  *
  * <p>FHIR has no single "when did this happen" field: each resource type carries its own, and most
  * are polymorphic choice types ({@code effective[x]}, {@code performed[x]}, {@code occurrence[x]}).

@@ -19,7 +19,9 @@ so it produces a jar and no runnable application.
 | [Developer Setup](docs/developer-setup.md) | Building, the coverage gate, and what belongs in this library |
 
 Start with the [Architecture Overview](docs/architecture-overview.md) if you are new to the system —
-it is the shared context the three service repositories build on and do not restate.
+it is the shared context the service repositories build on and do not restate. Four consume this
+library: the Protocol, Matcher and Compliance services, which map its entities, and the Collector
+Service, which imports three beans by name and maps none.
 
 ## What is here
 
