@@ -284,7 +284,7 @@ public class IntelligenceActionEvaluator {
         context.put("actionId", step.getActionId());
         context.put("repeatIndex", step.getRepeatIndex());
 
-        SlaThresholdReader.SlaThresholds thresholds = slaThresholdReader.thresholdsFor(step.getId());
+        SlaThresholdReader.SlaThresholds thresholds = slaThresholdReader.getThresholds(step.getId());
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
 
         if (thresholds.dueDate() != null) {
@@ -313,7 +313,7 @@ public class IntelligenceActionEvaluator {
         if (step.getCompletedAt() != null) {
             context.put("completedAt", step.getCompletedAt().toString());
         }
-        OffsetDateTime dueDate = slaThresholdReader.thresholdsFor(step.getId()).dueDate();
+        OffsetDateTime dueDate = slaThresholdReader.getThresholds(step.getId()).dueDate();
         if (dueDate != null) {
             context.put("dueDate", dueDate.toString());
         }

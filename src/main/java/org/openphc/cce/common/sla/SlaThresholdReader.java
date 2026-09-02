@@ -44,7 +44,7 @@ public class SlaThresholdReader {
     }
 
     /** The thresholds a step was scheduled with. */
-    public SlaThresholds thresholdsFor(UUID stepInstanceId) {
+    public SlaThresholds getThresholds(UUID stepInstanceId) {
         List<StepSlaStateTransition> rows = transitionRepository.findByStepInstanceId(stepInstanceId);
         if (rows.isEmpty()) {
             return SlaThresholds.NONE;

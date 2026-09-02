@@ -194,7 +194,7 @@ Reads a step's `dueDate` / `missedDate` back from its `step_sla_state_transition
 
 ```java
 record SlaThresholds(OffsetDateTime dueDate, OffsetDateTime missedDate) { }
-SlaThresholds thresholdsFor(UUID stepInstanceId)
+SlaThresholds getThresholds(UUID stepInstanceId)
 ```
 
 Read-only and `Propagation.SUPPORTS`, so it can be called inside or outside a transaction.

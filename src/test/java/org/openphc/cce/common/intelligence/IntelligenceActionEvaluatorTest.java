@@ -64,7 +64,7 @@ class IntelligenceActionEvaluatorTest {
                 deviationRepository, objectMapper, slaThresholdReader, meterRegistry);
 
         // Default: no SLA thresholds. Tests that assert on dueDate/daysOverdue stub them per step.
-        lenient().when(slaThresholdReader.thresholdsFor(any()))
+        lenient().when(slaThresholdReader.getThresholds(any()))
                 .thenReturn(new SlaThresholdReader.SlaThresholds(null, null));
     }
 
@@ -588,7 +588,7 @@ class IntelligenceActionEvaluatorTest {
 
     /** Stand in for the step_sla_state_transition rows this step would have been scheduled with. */
     private void stubThresholds(StepInstance step, OffsetDateTime dueDate, OffsetDateTime missedDate) {
-        lenient().when(slaThresholdReader.thresholdsFor(step.getId()))
+        lenient().when(slaThresholdReader.getThresholds(step.getId()))
                 .thenReturn(new SlaThresholdReader.SlaThresholds(dueDate, missedDate));
     }
 }
