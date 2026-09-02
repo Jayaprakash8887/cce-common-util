@@ -30,6 +30,22 @@ Widening `scanBasePackages` to `org.openphc.cce` is what makes the shared `@Serv
 `@Component` beans available. Note the consequence: a service picks up **every** bean this library
 declares, whether or not it uses it — see [§7](#what-a-consumer-gets-whether-it-asks-or-not).
 
+**Or import what you need by name.** The Collector Service does that instead:
+
+```java
+@Configuration
+@Import({FhirConfig.class, ClinicalEventTimeExtractor.class, KafkaTopicProperties.class})
+public class CommonUtilConfig { }
+```
+
+It owns one table and has no business holding the runtime plane's entities and repositories, and a
+scan of the whole library would also replace the `ObjectMapper` Spring Boot configures for its HTTP
+layer and add a second `GlobalExceptionHandler` beside its own. Two notes if you follow that route:
+the imports belong in a scanned `@Configuration` rather than on the application class, or slice tests
+such as `@DataJpaTest` inherit them and must satisfy dependencies they have no reason to configure —
+a `MeterRegistry`, in this case; and `@ConfigurationProperties` beans still bind normally when
+imported by name.
+
 Build wiring is covered in [Developer Setup](developer-setup.md).
 
 ---
@@ -116,6 +132,26 @@ outright rather than evicting one entry — `ConcurrentHashMap` forbids a mappin
 modifying the map it is computing on. There is no local write to invalidate on, so consumers that
 need freshness poll for definitional changes and call `evict`; staleness is bounded by that poll
 interval rather than by process lifetime.
+
+### `ClinicalEventTimeExtractor`
+
+The clinical occurrence time from a FHIR payload — when the act happened, as against the CloudEvents
+envelope `time` (the emitter's transmission clock) or the moment a service processed the event.
+
+FHIR has no single "when did this happen" field: each resource type carries its own, and most are
+polymorphic choice types (`effective[x]`, `performed[x]`, `occurrence[x]`), so the class holds a
+resource-type → ordered-candidate-field table and takes the first that parses. A `Period`'s `end`
+bound says when something finished rather than when the act occurred, so it is the last resort in
+every list — after that same Period's `start`. Parsing is lenient (HAPI `DateTimeType`, so `2026` and
+`2026-03` resolve), and an unmapped type, absent field or unparseable value returns null with a
+counter incremented, leaving the caller to fall back to the envelope time.
+
+It is here because two services need the same answer from the same payload: the Collector Service
+stamps `inbound_event_log.event_time` with it, and the Matcher Service bases a completed step's
+`completed_at` — and therefore its SLA verdict and every dependent step's due date — on it. They held
+separate copies until 2.0.0, and the copies had drifted: for an `Encounter` carrying both bounds, the
+collector read `period.end` while the matcher read `period.start`, so the audit trail and the SLA
+clock disagreed about when the visit happened.
 
 ### `ExpressionEvaluationService`
 
@@ -226,7 +262,7 @@ knowing when auditing a service's YAML: presence of a key does not prove that se
 | Property | Default | Read by |
 |---|---|---|
 | `cce.protocol.parsed-cache-size` | `256` | `ParsedProtocolCache` |
-| `cce.kafka.topics.inbound-events` | — | Matcher's `InboundEventConsumer` and its topic declarations |
+| `cce.kafka.topics.inbound-events` | — | Matcher's `InboundEventConsumer` and its topic declarations; the Collector Service's producer and topic creation |
 | `cce.kafka.topics.intelligence-triggers` | — | `IntelligenceTriggerProducer` |
 | `cce.kafka.topics.default-partitions` | `25` | consuming services' topic declarations |
 | `cce.kafka.retry.max-attempts` | `3` | consuming services' error handlers |

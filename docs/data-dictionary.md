@@ -10,7 +10,7 @@ described in two places eventually disagrees in two places.
 
 Three tables in the same database are mapped elsewhere, so their **columns** are described in the repo
 that owns them and not repeated here: `matcher_event_log` and `facility` in the Matcher Service, and
-`inbound_event_log` in the Collector Service, which does not use this library at all. They still appear
+`inbound_event_log` in the Collector Service, which uses this library but maps none of its entities. They still appear
 in the ER diagram, the table summary and the ownership table below: a reader asking "what is in `ccedb`
 and who writes it" should not have to know which repo an entity happens to live in to get a complete
 answer.
@@ -251,7 +251,9 @@ Everything else on this page covers rows 1-10.
 ## 3. Ownership
 
 One database, `ccedb`, shared by four services — the three built on this library, plus the Collector
-Service, which owns `inbound_event_log` and uses no shared library at all. Two rules keep that safe:
+Service, which owns `inbound_event_log`. It uses the library too, but only by importing three beans by
+name (`FhirConfig`, `ClinicalEventTimeExtractor`, `KafkaTopicProperties`); it maps none of the entities
+here, which is why none of its columns are described on this page. Two rules keep the sharing safe:
 exactly one service runs the DDL for a table, and exactly one service writes any given column.
 
 There is no `audit_log`. It was dropped in 2.0.0: the append-only history tables already carry state
