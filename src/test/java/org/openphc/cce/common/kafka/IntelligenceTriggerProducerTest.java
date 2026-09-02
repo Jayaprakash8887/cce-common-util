@@ -1,6 +1,5 @@
 package org.openphc.cce.common.kafka;
 
-import org.openphc.cce.common.kafka.IntelligenceTriggerProducer;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -13,7 +12,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.openphc.cce.common.kafka.KafkaTopicProperties;
 import org.openphc.cce.common.event.IntelligenceTriggerEvent;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;

@@ -164,7 +164,7 @@ schedule the step immediately and look like a working protocol.
 ## 6. Canonical references
 
 `ActivityDefinition` resources are referenced from intelligence actions as `url|version`, resolved by
-[`ActionDefinitionResolver`](library-reference.md#actiondefinitionresolver). The same form identifies
+[`ActionDefinitionResolver`](library-reference.md#intelligence--actiondefinitionresolver). The same form identifies
 a protocol (`ProtocolDefinition.getCanonical()`). It is not stored on `protocol_instance`: reaching it
 by foreign key gives the version the patient was enrolled under, because a new version lands as a new
 `protocol_definition` row rather than mutating one.

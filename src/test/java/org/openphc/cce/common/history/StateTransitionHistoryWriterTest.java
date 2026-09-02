@@ -1,4 +1,4 @@
-package org.openphc.cce.common.service;
+package org.openphc.cce.common.history;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,12 +24,12 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.verify;
 
 /**
- * Unit tests for {@link StateTransitionHistoryService}, which appends immutable history rows for
+ * Unit tests for {@link StateTransitionHistoryWriter}, which appends immutable history rows for
  * protocol- and step-instance transitions. Verifies the captured history row mirrors the current
  * instance state, including the nullable step completion status.
  */
 @ExtendWith(MockitoExtension.class)
-class StateTransitionHistoryServiceTest {
+class StateTransitionHistoryWriterTest {
 
     @Mock
     private ProtocolInstanceHistoryRepository protocolInstanceHistoryRepository;
@@ -37,13 +37,13 @@ class StateTransitionHistoryServiceTest {
     @Mock
     private StepInstanceHistoryRepository stepInstanceHistoryRepository;
 
-    private StateTransitionHistoryService service;
+    private StateTransitionHistoryWriter service;
 
     private final OffsetDateTime changedAt = OffsetDateTime.of(2026, 6, 30, 12, 0, 0, 0, ZoneOffset.UTC);
 
     @BeforeEach
     void setUp() {
-        service = new StateTransitionHistoryService(
+        service = new StateTransitionHistoryWriter(
                 protocolInstanceHistoryRepository, stepInstanceHistoryRepository);
     }
 

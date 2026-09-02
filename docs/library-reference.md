@@ -73,7 +73,7 @@ these to a clinical occurrence time, which must survive the insert rather than b
 with `now()`.
 
 `ProtocolDefinition.getCanonical()` and `ActionDefinition.getCanonical()` both render `url|version`,
-the form [`ActionDefinitionResolver`](#actiondefinitionresolver) parses.
+the form [`ActionDefinitionResolver`](#intelligence--actiondefinitionresolver) parses.
 
 ## 2. `repository` — Spring Data interfaces
 
@@ -154,47 +154,60 @@ collector read `period.end` while the matcher read `period.start`, so the audit 
 clock disagreed about when the visit happened. The two tables were reconciled by hand first, which is
 why the move itself changed no behaviour — holding one copy is what stops them drifting again.
 
-### `ExpressionEvaluationService`
+### `FhirExpressionEvaluator`
 
 Evaluates trigger and intelligence conditions. An unsupported expression language raises
-`UnsupportedExpressionLanguageException`, which [§5](#5-web) maps to `422`.
+`UnsupportedExpressionLanguageException`, which [§5](#5-exception) maps to `422`.
 
-## 4. `service` — shared behaviour
+## 4. `sla`, `deviation`, `history`, `intelligence` — shared behaviour
 
-### `IntelligenceActionEvaluator`
+One package per functional area rather than a single `service` bag, so that what a class is for is
+visible from where it lives — the same reason `fhir` and `kafka` are their own packages.
+
+### `intelligence` — `IntelligenceActionEvaluator`
 
 Decides whether a step's intelligence actions fire, records the attempt on `intelligence_event_log`,
 and publishes the trigger. Driven by both the Matcher Service (on completion) and the Compliance
 Service (on deviation), which is why it is here — see
 [Architecture Overview §3](architecture-overview.md#3-the-intelligence-trigger).
 
-### `DeviationService`
-
-Creates `deviation` rows and reports whether the row was new, so the caller can avoid re-triggering
-intelligence for a deviation already recorded.
-
-### `SlaThresholdReader`
-
-Reads a step's `dueDate` / `missedDate` back from its `step_sla_state_transition` rows.
-
-```java
-record SlaThresholds(OffsetDateTime dueDate, OffsetDateTime missedDate) { }
-SlaThresholds thresholds(UUID stepInstanceId)
-```
-
-Read-only and `Propagation.SUPPORTS`, so it can be called inside or outside a transaction. Both
-services need the thresholds and neither should re-derive them from the definition: the schedule
-already exists as rows, and recomputing risks disagreeing with what was scheduled.
-
-### `ActionDefinitionResolver`
+### `intelligence` — `ActionDefinitionResolver`
 
 Resolves a `definitionCanonical` (`url|version`) to an `ActionDefinition`. Splits on the **last**
 separator, so a URL containing a pipe still resolves. A reference with no version is rejected rather
 than guessed at — resolving on URL alone would silently pick a version.
 
-Read-only by design: creating and retiring these rows belongs to the Protocol Service.
+Read-only by design: creating and retiring these rows belongs to the Protocol Service. Its only caller
+is the evaluator above, so it reaches both services that drive that evaluator rather than being called
+by either directly.
 
-### `StateTransitionHistoryService`
+### `deviation` — `DeviationRecorder`
+
+`recordDeviation` inserts a `deviation` row and reports whether the row was new, so the caller can
+avoid re-triggering intelligence for a deviation already recorded. An empty metadata map is stored as
+null rather than as an empty JSON object, so the absence of detail reads the same however it was
+recorded.
+
+### `sla` — `SlaThresholdReader`
+
+Reads a step's `dueDate` / `missedDate` back from its `step_sla_state_transition` rows.
+
+```java
+record SlaThresholds(OffsetDateTime dueDate, OffsetDateTime missedDate) { }
+SlaThresholds thresholdsFor(UUID stepInstanceId)
+```
+
+Read-only and `Propagation.SUPPORTS`, so it can be called inside or outside a transaction.
+
+**It is not compliance-only, despite reading SLA rows.** The Matcher Service calls it when scheduling
+a dependent step, to anchor an after-start offset to the step it follows, and the shared intelligence
+evaluator calls it to build the `dueDate` and `daysOverdue` of a rule context — which both services
+drive. Neither should re-derive the deadlines from the definition: the schedule already exists as rows,
+and recomputing risks disagreeing with what was scheduled. Only the Matcher Service *writes* the
+schedule, and that write path deliberately stays in that service — nothing in this library can invent a
+deadline.
+
+### `history` — `StateTransitionHistoryWriter`
 
 Appends a row to `protocol_instance_history` / `step_instance_history` for each state change. Runs
 `MANDATORY`, inside the caller's transaction, so the history row commits with the change it records
@@ -208,7 +221,7 @@ overdue and was never completed had one history row instead of three.
 
 `step_instance_history.sla_status` is nullable, mirroring the column it copies.
 
-## 5. `web`
+## 5. `exception`
 
 `GlobalExceptionHandler` is a `@ControllerAdvice` shared by every service, so this mapping is a
 contract of the library rather than of any one controller:

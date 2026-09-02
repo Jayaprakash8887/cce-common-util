@@ -1,4 +1,4 @@
-package org.openphc.cce.common.web;
+package org.openphc.cce.common.exception;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.*;

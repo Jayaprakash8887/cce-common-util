@@ -1,4 +1,4 @@
-package org.openphc.cce.common.service;
+package org.openphc.cce.common.sla;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,7 +43,7 @@ class SlaThresholdReaderTest {
                 row(stepId, SlaTransitionType.DUE_DATE_REACHED, due),
                 row(stepId, SlaTransitionType.MISSED_DATE_REACHED, missed)));
 
-        SlaThresholdReader.SlaThresholds thresholds = reader.thresholds(stepId);
+        SlaThresholdReader.SlaThresholds thresholds = reader.thresholdsFor(stepId);
 
         assertEquals(due, thresholds.dueDate());
         assertEquals(missed, thresholds.missedDate());
@@ -59,7 +59,7 @@ class SlaThresholdReaderTest {
         when(transitionRepository.findByStepInstanceId(stepId)).thenReturn(List.of(applied));
 
         // process_by is never rewritten, so a settled SLA can still be judged against its deadline.
-        assertEquals(due, reader.thresholds(stepId).dueDate());
+        assertEquals(due, reader.thresholdsFor(stepId).dueDate());
     }
 
     @Test
@@ -67,7 +67,7 @@ class SlaThresholdReaderTest {
         UUID stepId = UUID.randomUUID();
         when(transitionRepository.findByStepInstanceId(stepId)).thenReturn(List.of());
 
-        SlaThresholdReader.SlaThresholds thresholds = reader.thresholds(stepId);
+        SlaThresholdReader.SlaThresholds thresholds = reader.thresholdsFor(stepId);
 
         assertNull(thresholds.dueDate());
         assertNull(thresholds.missedDate());
@@ -80,7 +80,7 @@ class SlaThresholdReaderTest {
         when(transitionRepository.findByStepInstanceId(stepId))
                 .thenReturn(List.of(row(stepId, SlaTransitionType.MISSED_DATE_REACHED, missed)));
 
-        SlaThresholdReader.SlaThresholds thresholds = reader.thresholds(stepId);
+        SlaThresholdReader.SlaThresholds thresholds = reader.thresholdsFor(stepId);
 
         assertNull(thresholds.dueDate());
         assertEquals(missed, thresholds.missedDate());

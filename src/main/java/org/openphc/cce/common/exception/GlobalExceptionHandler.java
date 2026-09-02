@@ -1,9 +1,8 @@
-package org.openphc.cce.common.web;
+package org.openphc.cce.common.exception;
 
 import ca.uhn.fhir.parser.DataFormatException;
 import jakarta.persistence.EntityNotFoundException;
 import org.openphc.cce.common.fhir.UnsupportedExpressionLanguageException;
-import org.openphc.cce.common.web.ErrorResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;

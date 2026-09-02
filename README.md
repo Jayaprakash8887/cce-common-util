@@ -29,13 +29,16 @@ Service, which imports three beans by name and maps none.
 org.openphc.cce.common
 ├── entity/      10 shared tables (+ one composite key type)
 ├── repository/  Spring Data interfaces for them
-├── fhir/        PlanDefinitionParser, ParsedProtocolCache, expression evaluation
-├── service/     IntelligenceActionEvaluator, DeviationService, SlaThresholdReader,
-│                ActionDefinitionResolver, StateTransitionHistoryService
+├── fhir/        PlanDefinitionParser, ParsedProtocolCache, FhirExpressionEvaluator,
+│                ClinicalEventTimeExtractor, TriggerPath
+├── sla/         SlaThresholdReader — a step's deadlines, read back
+├── deviation/   DeviationRecorder
+├── history/     StateTransitionHistoryWriter
+├── intelligence/ IntelligenceActionEvaluator, ActionDefinitionResolver
 ├── enums/       the shared vocabularies (StepStatus, SlaStatus, DeviationType, …)
 ├── event/       CloudEvents envelope and the intelligence trigger payload
 ├── kafka/       IntelligenceTriggerProducer, topic properties
-├── web/         GlobalExceptionHandler and its error body
+├── exception/   GlobalExceptionHandler and its error body
 ├── config/      shared ObjectMapper, FhirContext, retry properties
 └── support/     UUIDv7 generator
 ```

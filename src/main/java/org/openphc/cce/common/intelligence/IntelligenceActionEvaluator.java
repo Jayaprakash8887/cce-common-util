@@ -1,4 +1,4 @@
-package org.openphc.cce.common.service;
+package org.openphc.cce.common.intelligence;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -9,11 +9,12 @@ import org.openphc.cce.common.entity.*;
 import org.openphc.cce.common.repository.DeviationRepository;
 import org.openphc.cce.common.repository.IntelligenceEventLogRepository;
 
-import org.openphc.cce.common.fhir.ExpressionEvaluationService;
+import org.openphc.cce.common.fhir.FhirExpressionEvaluator;
 import org.openphc.cce.common.fhir.ParsedProtocolCache;
 import org.openphc.cce.common.fhir.PlanDefinitionParser;
 import org.openphc.cce.common.event.IntelligenceTriggerEvent;
 import org.openphc.cce.common.kafka.IntelligenceTriggerProducer;
+import org.openphc.cce.common.sla.SlaThresholdReader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -30,7 +31,7 @@ public class IntelligenceActionEvaluator {
     private static final Logger log = LoggerFactory.getLogger(IntelligenceActionEvaluator.class);
 
     private final ParsedProtocolCache parsedProtocolCache;
-    private final ExpressionEvaluationService expressionEvaluationService;
+    private final FhirExpressionEvaluator fhirExpressionEvaluator;
     private final ActionDefinitionResolver actionDefinitionService;
     private final IntelligenceTriggerProducer intelligenceTriggerProducer;
     private final IntelligenceEventLogRepository intelligenceEventLogRepository;
@@ -41,7 +42,7 @@ public class IntelligenceActionEvaluator {
     private final Counter actionsFiredCounter;
 
     public IntelligenceActionEvaluator(ParsedProtocolCache parsedProtocolCache,
-                                     ExpressionEvaluationService expressionEvaluationService,
+                                     FhirExpressionEvaluator fhirExpressionEvaluator,
                                      ActionDefinitionResolver actionDefinitionService,
                                      IntelligenceTriggerProducer intelligenceTriggerProducer,
                                      IntelligenceEventLogRepository intelligenceEventLogRepository,
@@ -50,7 +51,7 @@ public class IntelligenceActionEvaluator {
                                      SlaThresholdReader slaThresholdReader,
                                      MeterRegistry meterRegistry) {
         this.parsedProtocolCache = parsedProtocolCache;
-        this.expressionEvaluationService = expressionEvaluationService;
+        this.fhirExpressionEvaluator = fhirExpressionEvaluator;
         this.actionDefinitionService = actionDefinitionService;
         this.intelligenceTriggerProducer = intelligenceTriggerProducer;
         this.intelligenceEventLogRepository = intelligenceEventLogRepository;
@@ -157,7 +158,7 @@ public class IntelligenceActionEvaluator {
                                      JsonNode context) {
         actionsEvaluatedCounter.increment();
         try {
-            boolean matched = expressionEvaluationService.evaluate(
+            boolean matched = fhirExpressionEvaluator.evaluate(
                     action.conditionLanguage(), action.conditionExpression(), context);
             if (!matched) {
                 log.debug("Condition not met for intelligence action: actionId={}", action.actionId());
@@ -283,7 +284,7 @@ public class IntelligenceActionEvaluator {
         context.put("actionId", step.getActionId());
         context.put("repeatIndex", step.getRepeatIndex());
 
-        SlaThresholdReader.SlaThresholds thresholds = slaThresholdReader.thresholds(step.getId());
+        SlaThresholdReader.SlaThresholds thresholds = slaThresholdReader.thresholdsFor(step.getId());
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
 
         if (thresholds.dueDate() != null) {
@@ -312,7 +313,7 @@ public class IntelligenceActionEvaluator {
         if (step.getCompletedAt() != null) {
             context.put("completedAt", step.getCompletedAt().toString());
         }
-        OffsetDateTime dueDate = slaThresholdReader.thresholds(step.getId()).dueDate();
+        OffsetDateTime dueDate = slaThresholdReader.thresholdsFor(step.getId()).dueDate();
         if (dueDate != null) {
             context.put("dueDate", dueDate.toString());
         }

@@ -1,4 +1,4 @@
-package org.openphc.cce.common.service;
+package org.openphc.cce.common.intelligence;
 
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;

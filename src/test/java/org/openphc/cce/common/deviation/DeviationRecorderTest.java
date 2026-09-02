@@ -1,6 +1,5 @@
-package org.openphc.cce.common.service;
+package org.openphc.cce.common.deviation;
 
-import org.openphc.cce.common.service.DeviationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,23 +28,23 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class DeviationServiceTest {
+class DeviationRecorderTest {
 
     @Mock
     private DeviationRepository deviationRepository;
 
-    private DeviationService service;
+    private DeviationRecorder service;
     private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
-        service = new DeviationService(deviationRepository, objectMapper);
+        service = new DeviationRecorder(deviationRepository, objectMapper);
     }
 
     @Test
-    void createDeviation_persistsCorrectly() {
+    void recordDeviation_persistsCorrectly() {
         ProtocolInstance protocolInstance = buildProtocolInstance();
         StepInstance step = buildStep(protocolInstance, SlaStatus.OVERDUE);
 
@@ -55,8 +54,8 @@ class DeviationServiceTest {
             return d;
         });
 
-        DeviationService.DeviationResult result =
-                service.createDeviation(step, DeviationType.ORDER_VIOLATION);
+        DeviationRecorder.DeviationResult result =
+                service.recordDeviation(step, DeviationType.ORDER_VIOLATION);
 
         assertTrue(result.created(), "A newly inserted deviation should signal created=true");
         assertNotNull(result.deviation().getId());
@@ -68,7 +67,7 @@ class DeviationServiceTest {
     }
 
     @Test
-    void createDeviation_linksTheStepAndNotTheEnrolmentSeparately() {
+    void recordDeviation_linksTheStepAndNotTheEnrolmentSeparately() {
         // The enrolment is reachable through the step, so deviation carries no protocol_instance_id of
         // its own — one less column that could disagree with the step it hangs off.
         ProtocolInstance protocolInstance = buildProtocolInstance();
@@ -80,7 +79,7 @@ class DeviationServiceTest {
             return d;
         });
 
-        service.createDeviation(step, DeviationType.ORDER_VIOLATION);
+        service.recordDeviation(step, DeviationType.ORDER_VIOLATION);
 
         ArgumentCaptor<Deviation> saved = ArgumentCaptor.forClass(Deviation.class);
         verify(deviationRepository).save(saved.capture());
@@ -89,7 +88,7 @@ class DeviationServiceTest {
     }
 
     @Test
-    void createDeviation_withNoMetadata_storesNullMetadata() {
+    void recordDeviation_withNoMetadata_storesNullMetadata() {
         ProtocolInstance protocolInstance = buildProtocolInstance();
         StepInstance step = buildStep(protocolInstance, SlaStatus.OVERDUE);
 
@@ -99,14 +98,33 @@ class DeviationServiceTest {
             return d;
         });
 
-        DeviationService.DeviationResult result = service.createDeviation(step, DeviationType.ORDER_VIOLATION);
+        DeviationRecorder.DeviationResult result = service.recordDeviation(step, DeviationType.ORDER_VIOLATION);
 
         assertNotNull(result.deviation().getId());
         assertNull(result.deviation().getMetadata());
     }
 
     @Test
-    void createDeviation_withAdditionalMetadata_mergesMetadata() {
+    void recordDeviation_withAnEmptyMetadataMap_storesNullRatherThanAnEmptyObject() {
+        // A deviation recorded with an empty map has to read back the same as one recorded with no map
+        // at all, or the same absence of detail appears as null in one row and {} in the next.
+        ProtocolInstance protocolInstance = buildProtocolInstance();
+        StepInstance step = buildStep(protocolInstance, SlaStatus.OVERDUE);
+
+        when(deviationRepository.save(any(Deviation.class))).thenAnswer(invocation -> {
+            Deviation d = invocation.getArgument(0);
+            if (d.getId() == null) d.setId(UUID.randomUUID());
+            return d;
+        });
+
+        DeviationRecorder.DeviationResult result =
+                service.recordDeviation(step, DeviationType.ORDER_VIOLATION, Map.of());
+
+        assertNull(result.deviation().getMetadata());
+    }
+
+    @Test
+    void recordDeviation_withAdditionalMetadata_mergesMetadata() {
         ProtocolInstance protocolInstance = buildProtocolInstance();
         StepInstance step = buildStep(protocolInstance, SlaStatus.OVERDUE);
 
@@ -117,14 +135,14 @@ class DeviationServiceTest {
         });
 
         Map<String, Object> additional = Map.of("incompletePrerequisites", java.util.List.of("step-a"));
-        DeviationService.DeviationResult result = service.createDeviation(step, DeviationType.ORDER_VIOLATION, additional);
+        DeviationRecorder.DeviationResult result = service.recordDeviation(step, DeviationType.ORDER_VIOLATION, additional);
 
         assertNotNull(result.deviation().getId());
         assertNotNull(result.deviation().getMetadata());
     }
 
     @Test
-    void createDeviation_whenSameTypeAlreadyExists_returnsExistingWithoutInserting() {
+    void recordDeviation_whenSameTypeAlreadyExists_returnsExistingWithoutInserting() {
         // Idempotency: a redelivered / concurrent trigger must not create a second
         // deviation of the same type for the same step.
         ProtocolInstance protocolInstance = buildProtocolInstance();
@@ -140,7 +158,7 @@ class DeviationServiceTest {
         when(deviationRepository.findByStepInstanceIdAndDeviationType(step.getId(), DeviationType.ORDER_VIOLATION))
                 .thenReturn(java.util.Optional.of(existing));
 
-        DeviationService.DeviationResult result = service.createDeviation(step, DeviationType.ORDER_VIOLATION);
+        DeviationRecorder.DeviationResult result = service.recordDeviation(step, DeviationType.ORDER_VIOLATION);
 
         assertFalse(result.created(), "Should signal the deviation already existed");
         assertSame(existing, result.deviation(), "Should return the pre-existing deviation");
@@ -148,7 +166,7 @@ class DeviationServiceTest {
     }
 
     @Test
-    void createDeviation_doesNotPublishIntelligenceTrigger() {
+    void recordDeviation_doesNotPublishIntelligenceTrigger() {
         ProtocolInstance protocolInstance = buildProtocolInstance();
         StepInstance step = buildStep(protocolInstance, SlaStatus.OVERDUE);
 
@@ -158,7 +176,7 @@ class DeviationServiceTest {
             return d;
         });
 
-        DeviationService.DeviationResult result = service.createDeviation(step, DeviationType.ORDER_VIOLATION);
+        DeviationRecorder.DeviationResult result = service.recordDeviation(step, DeviationType.ORDER_VIOLATION);
 
         // recordDeviation never links an intelligence event; the caller does that after evaluating
         assertNull(result.deviation().getIntelligenceEventId());

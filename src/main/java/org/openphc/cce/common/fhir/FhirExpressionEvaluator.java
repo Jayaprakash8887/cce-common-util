@@ -23,9 +23,9 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
-public class ExpressionEvaluationService {
+public class FhirExpressionEvaluator {
 
-    private static final Logger log = LoggerFactory.getLogger(ExpressionEvaluationService.class);
+    private static final Logger log = LoggerFactory.getLogger(FhirExpressionEvaluator.class);
 
     private static final String LANGUAGE_JSONLOGIC = "text/jsonlogic";
     private static final String LANGUAGE_FHIRPATH = "text/fhirpath";
@@ -36,7 +36,7 @@ public class ExpressionEvaluationService {
     private final ObjectMapper objectMapper;
     private final ConcurrentHashMap<String, JsonValue> jsonLogicRuleCache = new ConcurrentHashMap<>();
 
-    public ExpressionEvaluationService(FhirContext fhirContext, ObjectMapper objectMapper) {
+    public FhirExpressionEvaluator(FhirContext fhirContext, ObjectMapper objectMapper) {
         this.fhirPath = fhirContext.newFhirPath();
         this.fhirJsonParser = fhirContext.newJsonParser();
         this.objectMapper = objectMapper;

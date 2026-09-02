@@ -15,24 +15,24 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Error- and edge-path unit tests for {@link ExpressionEvaluationService} — the fail-soft branches
+ * Error- and edge-path unit tests for {@link FhirExpressionEvaluator} — the fail-soft branches
  * (evaluation errors resolve to {@code false}) and the non-boolean FHIRPath truthiness rule. These
- * complement the happy-path cases in {@link ExpressionEvaluationServiceTest}.
+ * complement the happy-path cases in {@link FhirExpressionEvaluatorTest}.
  */
-class ExpressionEvaluationServiceErrorPathsTest {
+class FhirExpressionEvaluatorErrorPathsTest {
 
     private static final String PATIENT_JSON =
             "{\"resourceType\":\"Patient\",\"id\":\"p1\",\"gender\":\"female\"}";
 
     private FhirContext fhirContext;
     private ObjectMapper objectMapper;
-    private ExpressionEvaluationService service;
+    private FhirExpressionEvaluator service;
 
     @BeforeEach
     void setUp() {
         fhirContext = FhirContext.forR4();
         objectMapper = new ObjectMapper();
-        service = new ExpressionEvaluationService(fhirContext, objectMapper);
+        service = new FhirExpressionEvaluator(fhirContext, objectMapper);
     }
 
     private JsonNode patient() {
@@ -58,7 +58,7 @@ class ExpressionEvaluationServiceErrorPathsTest {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException(e);
         }
-        ExpressionEvaluationService svc = new ExpressionEvaluationService(fhirContext, failing);
+        FhirExpressionEvaluator svc = new FhirExpressionEvaluator(fhirContext, failing);
 
         assertFalse(svc.evaluate("text/jsonlogic", "{\"==\":[1,1]}", objectMapper.valueToTree(Map.of())));
     }

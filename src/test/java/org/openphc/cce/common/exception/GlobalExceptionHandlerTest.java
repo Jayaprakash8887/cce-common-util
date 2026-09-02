@@ -1,4 +1,4 @@
-package org.openphc.cce.common.web;
+package org.openphc.cce.common.exception;
 
 import ca.uhn.fhir.parser.DataFormatException;
 import jakarta.persistence.EntityNotFoundException;

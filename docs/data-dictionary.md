@@ -534,7 +534,7 @@ Records **protocol deviations** — three kinds, written by two services.
 
 When intelligence actions are configured on the step's PlanDefinition action, the `IntelligenceActionEvaluator` is invoked and the `intelligence_event_id` is populated with the published event's UUID.
 
-A step has **at most one deviation per type** — enforced by the `deviation_step_type_key` unique constraint on `(step_instance_id, deviation_type)`. This makes deviation creation idempotent against a retried evaluation and concurrent threads: `DeviationService.createDeviation` pre-checks for an existing deviation and returns it instead of inserting a duplicate, with the unique constraint as the ultimate backstop. It returns a `DeviationResult(deviation, created)`; the `created` flag lets callers fire one-time side effects (intelligence action evaluation) **only** when a new deviation was actually inserted, so a redelivered or concurrent trigger produces neither a duplicate deviation row nor a duplicate intelligence event.
+A step has **at most one deviation per type** — enforced by the `deviation_step_type_key` unique constraint on `(step_instance_id, deviation_type)`. This makes deviation creation idempotent against a retried evaluation and concurrent threads: `DeviationRecorder.recordDeviation` pre-checks for an existing deviation and returns it instead of inserting a duplicate, with the unique constraint as the ultimate backstop. It returns a `DeviationResult(deviation, created)`; the `created` flag lets callers fire one-time side effects (intelligence action evaluation) **only** when a new deviation was actually inserted, so a redelivered or concurrent trigger produces neither a duplicate deviation row nor a duplicate intelligence event.
 
 ### Columns
 
@@ -704,7 +704,7 @@ place — the prior value is lost — so point-in-time analytics ("what state wa
 historical rebuilds of the ClickHouse daily-summary MVs are otherwise impossible.
 
 Written by the shared
-[`StateTransitionHistoryService`](library-reference.md#statetransitionhistoryservice), invoked
+[`StateTransitionHistoryWriter`](library-reference.md#history--statetransitionhistorywriter), invoked
 immediately after every status write. The INSERT runs with `Propagation.MANDATORY`, inside the
 caller's transaction, so it is atomic with the transition it records and there is no window where one
 exists without the other. The caveat is the same one that atomicity buys: out-of-band SQL `UPDATE`s
@@ -958,7 +958,7 @@ The `definition` column stores the complete FHIR R4 PlanDefinition resource. Key
 
 ### deviation — `metadata`
 
-Whatever context the recording service supplies. `DeviationService` performs no auto-enrichment: the
+Whatever context the recording service supplies. `DeviationRecorder` performs no auto-enrichment: the
 column holds exactly the map its caller passed, or `NULL` when none was.
 
 For the `ORDER_VIOLATION` deviations Matcher records:

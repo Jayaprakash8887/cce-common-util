@@ -1,14 +1,12 @@
-package org.openphc.cce.common.service;
+package org.openphc.cce.common.intelligence;
 
-import org.openphc.cce.common.service.SlaThresholdReader;
+import org.openphc.cce.common.sla.SlaThresholdReader;
 import org.openphc.cce.common.entity.Deviation;
 import org.openphc.cce.common.entity.StepInstance;
 import org.openphc.cce.common.entity.ProtocolInstance;
 import org.openphc.cce.common.entity.ActionDefinition;
 import org.openphc.cce.common.entity.ProtocolDefinition;
 import org.openphc.cce.common.entity.IntelligenceEventLog;
-import org.openphc.cce.common.service.ActionDefinitionResolver;
-import org.openphc.cce.common.service.IntelligenceActionEvaluator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Counter;
@@ -26,7 +24,7 @@ import org.openphc.cce.common.enums.*;
 import org.openphc.cce.common.repository.DeviationRepository;
 import org.openphc.cce.common.repository.IntelligenceEventLogRepository;
 
-import org.openphc.cce.common.fhir.ExpressionEvaluationService;
+import org.openphc.cce.common.fhir.FhirExpressionEvaluator;
 import org.openphc.cce.common.fhir.ParsedProtocolCache;
 import org.openphc.cce.common.fhir.PlanDefinitionParser;
 import org.openphc.cce.common.event.IntelligenceTriggerEvent;
@@ -45,7 +43,7 @@ import static org.mockito.Mockito.*;
 class IntelligenceActionEvaluatorTest {
 
     @Mock private ParsedProtocolCache parsedProtocolCache;
-    @Mock private ExpressionEvaluationService expressionEvaluationService;
+    @Mock private FhirExpressionEvaluator fhirExpressionEvaluator;
     @Mock private ActionDefinitionResolver actionDefinitionService;
     @Mock private IntelligenceTriggerProducer intelligenceTriggerProducer;
     @Mock private IntelligenceEventLogRepository intelligenceEventLogRepository;
@@ -60,13 +58,13 @@ class IntelligenceActionEvaluatorTest {
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
         evaluator = new IntelligenceActionEvaluator(
-                parsedProtocolCache, expressionEvaluationService,
+                parsedProtocolCache, fhirExpressionEvaluator,
                 actionDefinitionService, intelligenceTriggerProducer,
                 intelligenceEventLogRepository,
                 deviationRepository, objectMapper, slaThresholdReader, meterRegistry);
 
         // Default: no SLA thresholds. Tests that assert on dueDate/daysOverdue stub them per step.
-        lenient().when(slaThresholdReader.thresholds(any()))
+        lenient().when(slaThresholdReader.thresholdsFor(any()))
                 .thenReturn(new SlaThresholdReader.SlaThresholds(null, null));
     }
 
@@ -86,7 +84,7 @@ class IntelligenceActionEvaluatorTest {
                     buildIntelligenceAction("bp-high-alert", "text/jsonlogic", expr,
                             "http://openphc.org/ActivityDefinition/alert|1.0")));
 
-            when(expressionEvaluationService.evaluate(eq("text/jsonlogic"), eq(expr), any()))
+            when(fhirExpressionEvaluator.evaluate(eq("text/jsonlogic"), eq(expr), any()))
                     .thenReturn(true);
             when(actionDefinitionService.resolveByCanonical("http://openphc.org/ActivityDefinition/alert|1.0"))
                     .thenReturn(actionDef);
@@ -143,7 +141,7 @@ class IntelligenceActionEvaluatorTest {
                             "{\">\": [{\"var\": \"daysOverdue\"}, 30]}",
                             "http://openphc.org/ActivityDefinition/alert|1.0")));
 
-            when(expressionEvaluationService.evaluate(anyString(), anyString(), any()))
+            when(fhirExpressionEvaluator.evaluate(anyString(), anyString(), any()))
                     .thenReturn(false);
 
             List<IntelligenceEventLog> result = evaluator.evaluateOnDeviation(step, deviation);
@@ -167,11 +165,11 @@ class IntelligenceActionEvaluatorTest {
                     buildIntelligenceAction("bp-critical-escalation", "text/fhirpath", "true",
                             "http://openphc.org/ActivityDefinition/escalation|1.0")));
 
-            when(expressionEvaluationService.evaluate(eq("text/jsonlogic"), eq("{\"==\": [1, 1]}"), any()))
+            when(fhirExpressionEvaluator.evaluate(eq("text/jsonlogic"), eq("{\"==\": [1, 1]}"), any()))
                     .thenReturn(true);
-            when(expressionEvaluationService.evaluate(eq("text/jsonlogic"), eq("{\"==\": [1, 0]}"), any()))
+            when(fhirExpressionEvaluator.evaluate(eq("text/jsonlogic"), eq("{\"==\": [1, 0]}"), any()))
                     .thenReturn(false);
-            when(expressionEvaluationService.evaluate(eq("text/fhirpath"), eq("true"), any()))
+            when(fhirExpressionEvaluator.evaluate(eq("text/fhirpath"), eq("true"), any()))
                     .thenReturn(true);
             when(actionDefinitionService.resolveByCanonical(anyString())).thenReturn(actionDef);
             when(intelligenceEventLogRepository.save(any(IntelligenceEventLog.class))).thenAnswer(i -> {
@@ -201,7 +199,7 @@ class IntelligenceActionEvaluatorTest {
                     buildIntelligenceAction("bp-high-alert", "text/jsonlogic", "{\"==\": [1, 1]}",
                             "http://openphc.org/ActivityDefinition/missing|1.0")));
 
-            when(expressionEvaluationService.evaluate(anyString(), anyString(), any()))
+            when(fhirExpressionEvaluator.evaluate(anyString(), anyString(), any()))
                     .thenReturn(true);
             when(actionDefinitionService.resolveByCanonical("http://openphc.org/ActivityDefinition/missing|1.0"))
                     .thenThrow(new EntityNotFoundException("not found"));
@@ -222,7 +220,7 @@ class IntelligenceActionEvaluatorTest {
             List<IntelligenceEventLog> result = evaluator.evaluateOnDeviation(step, deviation);
 
             assertTrue(result.isEmpty());
-            verify(expressionEvaluationService, never()).evaluate(anyString(), anyString(), any());
+            verify(fhirExpressionEvaluator, never()).evaluate(anyString(), anyString(), any());
         }
 
         @Test
@@ -236,13 +234,13 @@ class IntelligenceActionEvaluatorTest {
                     buildIntelligenceAction("bp-high-alert", "text/jsonlogic", "{\"==\": [1, 1]}",
                             "http://openphc.org/ActivityDefinition/alert|1.0")));
 
-            when(expressionEvaluationService.evaluate(anyString(), anyString(), any()))
+            when(fhirExpressionEvaluator.evaluate(anyString(), anyString(), any()))
                     .thenReturn(false);
 
             evaluator.evaluateOnDeviation(step, deviation);
 
             ArgumentCaptor<JsonNode> contextCaptor = ArgumentCaptor.forClass(JsonNode.class);
-            verify(expressionEvaluationService).evaluate(anyString(), anyString(), contextCaptor.capture());
+            verify(fhirExpressionEvaluator).evaluate(anyString(), anyString(), contextCaptor.capture());
 
             JsonNode context = contextCaptor.getValue();
             assertEquals("not-started", context.get("stepStatus").asText());
@@ -274,7 +272,7 @@ class IntelligenceActionEvaluatorTest {
                             "{\"==\": [{\"var\": \"slaStatus\"}, \"overdue\"]}",
                             "http://openphc.org/ActivityDefinition/late-alert|1.0")));
 
-            when(expressionEvaluationService.evaluate(anyString(), anyString(), any()))
+            when(fhirExpressionEvaluator.evaluate(anyString(), anyString(), any()))
                     .thenReturn(true);
             when(actionDefinitionService.resolveByCanonical(anyString())).thenReturn(actionDef);
             when(intelligenceEventLogRepository.save(any(IntelligenceEventLog.class))).thenAnswer(i -> {
@@ -309,13 +307,13 @@ class IntelligenceActionEvaluatorTest {
                     buildIntelligenceAction("check-rule", "text/jsonlogic", "{\"==\": [1, 0]}",
                             "http://openphc.org/ActivityDefinition/alert|1.0")));
 
-            when(expressionEvaluationService.evaluate(anyString(), anyString(), any()))
+            when(fhirExpressionEvaluator.evaluate(anyString(), anyString(), any()))
                     .thenReturn(false);
 
             evaluator.evaluateOnCompletion(step, null);
 
             ArgumentCaptor<JsonNode> contextCaptor = ArgumentCaptor.forClass(JsonNode.class);
-            verify(expressionEvaluationService).evaluate(anyString(), anyString(), contextCaptor.capture());
+            verify(fhirExpressionEvaluator).evaluate(anyString(), anyString(), contextCaptor.capture());
 
             JsonNode context = contextCaptor.getValue();
             assertEquals("completed", context.get("stepStatus").asText());
@@ -354,7 +352,7 @@ class IntelligenceActionEvaluatorTest {
                     buildIntelligenceAction("error-action", "text/jsonlogic", "invalid-expr",
                             "http://openphc.org/ActivityDefinition/alert|1.0")));
 
-            when(expressionEvaluationService.evaluate(anyString(), anyString(), any()))
+            when(fhirExpressionEvaluator.evaluate(anyString(), anyString(), any()))
                     .thenThrow(new RuntimeException("parse error"));
 
             List<IntelligenceEventLog> result = evaluator.evaluateOnDeviation(step, deviation);
@@ -389,7 +387,7 @@ class IntelligenceActionEvaluatorTest {
                     buildIntelligenceAction("bp-high-alert", "text/jsonlogic", "{\"==\": [1, 1]}",
                             "http://openphc.org/ActivityDefinition/alert|1.0")));
 
-            when(expressionEvaluationService.evaluate(anyString(), anyString(), any()))
+            when(fhirExpressionEvaluator.evaluate(anyString(), anyString(), any()))
                     .thenReturn(true);
             when(actionDefinitionService.resolveByCanonical(anyString())).thenReturn(actionDef);
             when(intelligenceEventLogRepository.save(any(IntelligenceEventLog.class))).thenAnswer(i -> {
@@ -416,7 +414,7 @@ class IntelligenceActionEvaluatorTest {
                     buildIntelligenceAction("bp-high-alert", "text/jsonlogic", "{\"==\": [1, 1]}",
                             "http://openphc.org/ActivityDefinition/alert|1.0")));
 
-            when(expressionEvaluationService.evaluate(anyString(), anyString(), any()))
+            when(fhirExpressionEvaluator.evaluate(anyString(), anyString(), any()))
                     .thenReturn(true);
             when(actionDefinitionService.resolveByCanonical(anyString())).thenReturn(actionDef);
             when(intelligenceEventLogRepository.save(any(IntelligenceEventLog.class))).thenAnswer(i -> {
@@ -454,7 +452,7 @@ class IntelligenceActionEvaluatorTest {
                     buildIntelligenceAction("action-2", "text/jsonlogic", "{\"==\": [1, 0]}",
                             "http://openphc.org/ActivityDefinition/other|1.0")));
 
-            when(expressionEvaluationService.evaluate(anyString(), anyString(), any()))
+            when(fhirExpressionEvaluator.evaluate(anyString(), anyString(), any()))
                     .thenReturn(false);
 
             evaluator.evaluateOnDeviation(step, deviation);
@@ -476,9 +474,9 @@ class IntelligenceActionEvaluatorTest {
                     buildIntelligenceAction("action-2", "text/jsonlogic", "{\"==\": [1, 0]}",
                             "http://openphc.org/ActivityDefinition/other|1.0")));
 
-            when(expressionEvaluationService.evaluate(eq("text/jsonlogic"), eq("{\"==\": [1, 1]}"), any()))
+            when(fhirExpressionEvaluator.evaluate(eq("text/jsonlogic"), eq("{\"==\": [1, 1]}"), any()))
                     .thenReturn(true);
-            when(expressionEvaluationService.evaluate(eq("text/jsonlogic"), eq("{\"==\": [1, 0]}"), any()))
+            when(fhirExpressionEvaluator.evaluate(eq("text/jsonlogic"), eq("{\"==\": [1, 0]}"), any()))
                     .thenReturn(false);
             when(actionDefinitionService.resolveByCanonical(anyString())).thenReturn(actionDef);
             when(intelligenceEventLogRepository.save(any(IntelligenceEventLog.class))).thenAnswer(i -> {
@@ -590,7 +588,7 @@ class IntelligenceActionEvaluatorTest {
 
     /** Stand in for the step_sla_state_transition rows this step would have been scheduled with. */
     private void stubThresholds(StepInstance step, OffsetDateTime dueDate, OffsetDateTime missedDate) {
-        lenient().when(slaThresholdReader.thresholds(step.getId()))
+        lenient().when(slaThresholdReader.thresholdsFor(step.getId()))
                 .thenReturn(new SlaThresholdReader.SlaThresholds(dueDate, missedDate));
     }
 }

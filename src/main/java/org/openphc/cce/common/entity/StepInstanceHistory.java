@@ -13,7 +13,7 @@ import java.util.UUID;
  * DELETEd — so the table is a faithful, point-in-time-reconstructible record and a clean
  * CDC source.
  *
- * @see org.openphc.cce.common.service.StateTransitionHistoryService
+ * @see org.openphc.cce.common.history.StateTransitionHistoryWriter
  */
 @Entity
 @Table(name = "step_instance_history")

@@ -12,9 +12,9 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ExpressionEvaluationServiceTest {
+class FhirExpressionEvaluatorTest {
 
-    private ExpressionEvaluationService service;
+    private FhirExpressionEvaluator service;
     private ObjectMapper objectMapper;
 
     @BeforeEach
@@ -22,7 +22,7 @@ class ExpressionEvaluationServiceTest {
         FhirContext fhirContext = FhirContext.forR4();
         objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
-        service = new ExpressionEvaluationService(fhirContext, objectMapper);
+        service = new FhirExpressionEvaluator(fhirContext, objectMapper);
     }
 
     private JsonNode toJsonNode(Object obj) {

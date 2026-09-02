@@ -1,6 +1,5 @@
 package org.openphc.cce.common.fhir;
 
-import org.openphc.cce.common.fhir.PlanDefinitionParser;
 import org.hl7.fhir.r4.model.PlanDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -1,4 +1,4 @@
-package org.openphc.cce.common.service;
+package org.openphc.cce.common.sla;
 
 import org.openphc.cce.common.entity.StepSlaStateTransition;
 import org.openphc.cce.common.repository.StepSlaStateTransitionRepository;
@@ -44,7 +44,7 @@ public class SlaThresholdReader {
     }
 
     /** The thresholds a step was scheduled with. */
-    public SlaThresholds thresholds(UUID stepInstanceId) {
+    public SlaThresholds thresholdsFor(UUID stepInstanceId) {
         List<StepSlaStateTransition> rows = transitionRepository.findByStepInstanceId(stepInstanceId);
         if (rows.isEmpty()) {
             return SlaThresholds.NONE;

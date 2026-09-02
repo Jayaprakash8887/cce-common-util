@@ -91,7 +91,7 @@ Both the Matcher and Compliance services publish to `cce.intelligence.triggers`,
 be the proximate cause of an intelligence action: the Matcher when a step completes or an
 `ORDER_VIOLATION` is detected, the Compliance Service when a deadline passes. The evaluation logic
 is identical, so it lives here once
-([`IntelligenceActionEvaluator`](library-reference.md#intelligenceactionevaluator)) and both
+([`IntelligenceActionEvaluator`](library-reference.md#intelligence--intelligenceactionevaluator)) and both
 services drive it.
 
 Publication is confirmed rather than fire-and-forget: the producer waits for the broker

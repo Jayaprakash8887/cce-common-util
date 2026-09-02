@@ -1,4 +1,4 @@
-package org.openphc.cce.common.service;
+package org.openphc.cce.common.history;
 
 import org.openphc.cce.common.entity.ProtocolInstance;
 import org.openphc.cce.common.entity.ProtocolInstanceHistory;
@@ -35,12 +35,12 @@ import java.time.OffsetDateTime;
  */
 @Service
 @Transactional(propagation = Propagation.MANDATORY)
-public class StateTransitionHistoryService {
+public class StateTransitionHistoryWriter {
 
     private final ProtocolInstanceHistoryRepository protocolInstanceHistoryRepository;
     private final StepInstanceHistoryRepository stepInstanceHistoryRepository;
 
-    public StateTransitionHistoryService(ProtocolInstanceHistoryRepository protocolInstanceHistoryRepository,
+    public StateTransitionHistoryWriter(ProtocolInstanceHistoryRepository protocolInstanceHistoryRepository,
                                StepInstanceHistoryRepository stepInstanceHistoryRepository) {
         this.protocolInstanceHistoryRepository = protocolInstanceHistoryRepository;
         this.stepInstanceHistoryRepository = stepInstanceHistoryRepository;

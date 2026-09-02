@@ -12,7 +12,7 @@ import java.util.UUID;
  * subsequent change). Rows are only ever INSERTed — never UPDATEd or DELETEd — so the
  * table is a faithful, point-in-time-reconstructible record and a clean CDC source.
  *
- * @see org.openphc.cce.common.service.StateTransitionHistoryService
+ * @see org.openphc.cce.common.history.StateTransitionHistoryWriter
  */
 @Entity
 @Table(name = "protocol_instance_history")

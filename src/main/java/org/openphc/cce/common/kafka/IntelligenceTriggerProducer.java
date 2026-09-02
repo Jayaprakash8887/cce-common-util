@@ -3,7 +3,6 @@ package org.openphc.cce.common.kafka;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import org.openphc.cce.common.kafka.KafkaTopicProperties;
 import org.openphc.cce.common.event.IntelligenceTriggerEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
