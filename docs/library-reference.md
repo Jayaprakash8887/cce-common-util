@@ -183,7 +183,7 @@ visible from where it lives — the same reason `fhir` and `kafka` are their own
 ### `intelligence` — `IntelligenceActionEvaluator`
 
 Decides whether a step's intelligence actions fire, records the attempt on `intelligence_event_log`,
-and publishes the trigger. Driven by both the Matcher Service (on completion) and the Compliance
+and publishes the trigger. Driven by both the Matcher Service (on completion) and the Step SLA
 Service (on deviation), which is why it is here — see
 [Architecture Overview §3](architecture-overview.md#3-the-intelligence-trigger).
 
