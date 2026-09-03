@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
  * extracted, and so could never fire.
  *
  * <p>So the list lives here once, and both sides use it: {@code PlanDefinitionParser.validateTriggers}
- * rejects a protocol that names anything else, and the Matcher Service's {@code ResourceInfoExtractor}
+ * rejects a protocol that names anything else, and the Matcher Service's {@code EventCodesExtractor}
  * drives its extraction from these members rather than repeating them.
  *
  * <p><strong>Adding a path</strong> means adding a member here. The extractor picks it up from
