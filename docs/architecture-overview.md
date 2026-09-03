@@ -9,7 +9,7 @@ them restates what is here.
 |---|---|
 | **cce-protocol-service** | The definitional plane. Loads FHIR PlanDefinitions and ActivityDefinitions, builds the trigger index. |
 | **cce-matcher-service** | The event plane. Matches inbound clinical events, enrols patients, creates and completes steps. |
-| **cce-compliance-service** | The time plane. Applies SLA transitions as deadlines pass, records the resulting deviations. |
+| **cce-step-sla-service** | The time plane. Applies SLA transitions as deadlines pass, records the resulting deviations. |
 | **cce-common-util** | This library. Shared entities, repositories, FHIR parsing, and the services that operate on them. |
 
 ---
@@ -61,7 +61,7 @@ flowchart TB
         MS["cce-matcher-service<br/>:8091"]
     end
     subgraph time["Time plane"]
-        CS["cce-compliance-service<br/>:8092"]
+        CS["cce-step-sla-service<br/>:8092"]
     end
 
     Admin["Protocol author"] -->|"REST"| PS
@@ -79,7 +79,7 @@ flowchart TB
 
 There is no synchronous call between the three services, and no Kafka hop between them either. They
 coordinate entirely through `ccedb`: the Protocol Service writes rows the Matcher Service reads, and
-the Matcher Service writes the `step_sla_state_transition` rows the Compliance Service claims. This
+the Matcher Service writes the `step_sla_state_transition` rows the Step SLA Service claims. This
 is deliberate — a request-response dependency between them would mean an inbound clinical event
 could fail because the definitional plane was restarting.
 
@@ -89,7 +89,7 @@ could fail because the definitional plane was restarting.
 
 Both the Matcher and Compliance services publish to `cce.intelligence.triggers`, because both can
 be the proximate cause of an intelligence action: the Matcher when a step completes or an
-`ORDER_VIOLATION` is detected, the Compliance Service when a deadline passes. The evaluation logic
+`ORDER_VIOLATION` is detected, the Step SLA Service when a deadline passes. The evaluation logic
 is identical, so it lives here once
 ([`IntelligenceActionEvaluator`](library-reference.md#intelligence--intelligenceactionevaluator)) and both
 services drive it.
@@ -140,7 +140,7 @@ judge on yet: no threshold has fallen due, and the step has not been completed e
 look like one that had been made. Null is also the permanent state of a step with no due date: no
 thresholds are scheduled for it, so nothing will ever judge it, which is exactly right.
 
-Ownership: the Matcher Service writes `step_status` and `completed_at`; the **Compliance Service alone**
+Ownership: the Matcher Service writes `step_status` and `completed_at`; the **Step SLA Service alone**
 writes `sla_status`. Matcher records that the work happened and when, never whether that was timely —
 so there is no rule about which service may overwrite the other, because only one of them ever writes
 the column. A step's SLA has exactly one author and one source of evidence. See
@@ -156,7 +156,7 @@ What each threshold means for a step is the SLA transition contract, in §5.
 
 ## 5. SLA transition contract
 
-The Matcher Service knows a step's deadlines the moment it creates the step; the Compliance Service
+The Matcher Service knows a step's deadlines the moment it creates the step; the Step SLA Service
 must act on them later, without polling every step in the database. The `step_sla_state_transition`
 table is that handoff — one row per threshold, inserted at step creation, carrying the time it
 becomes actionable.
@@ -218,7 +218,7 @@ A row that fails is retried with exponential backoff (`2^attempts`, capped), not
 
 **Protocol → Matcher → Compliance**, following the migration ownership in
 [Data Dictionary §3](data-dictionary.md#3-ownership). Matcher's migration declares foreign keys into
-tables the Protocol Service creates, and the Compliance Service validates its JPA mapping at
+tables the Protocol Service creates, and the Step SLA Service validates its JPA mapping at
 startup against tables both of the others created — it will fail fast rather than start against a
 schema that cannot serve it.
 
@@ -236,4 +236,4 @@ Each service's own deployment steps are in its repository's deployment guide.
 | Building against or contributing to this library | [Developer Setup](developer-setup.md) |
 | Matching algorithm, enrolment, step lifecycle | Matcher Service repo |
 | Definition loading and trigger index construction | Protocol Service repo |
-| SLA sweep internals and tuning | Compliance Service repo |
+| SLA sweep internals and tuning | Step SLA Service repo |

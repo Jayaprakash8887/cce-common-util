@@ -17,7 +17,7 @@ package org.openphc.cce.common.enums;
  * its {@code sla_status} stays null for good — correctly, because no SLA applies.
  *
  * <h2>One writer</h2>
- * Every value here is written by the <strong>Compliance Service</strong> alone, as it applies
+ * Every value here is written by the <strong>Step SLA Service</strong> alone, as it applies
  * {@code step_sla_state_transition} rows. Matcher schedules the thresholds and records the completion,
  * but never judges timeliness — so there is no window in which the two services disagree about a step's
  * SLA, and no rule about which of them may overwrite the other.

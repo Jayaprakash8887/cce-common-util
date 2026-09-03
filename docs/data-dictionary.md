@@ -17,7 +17,7 @@ answer.
 
 The two state-transition history tables *are* documented here, in
 [§12](#12-state-transition-history-tables). Their entities moved into this library in 2.0.0 when the
-Compliance Service began recording the `sla_status` transitions it applies, so they stopped belonging
+Step SLA Service began recording the `sla_status` transitions it applies, so they stopped belonging
 to any one service.
 
 For which service *creates* and which service *writes* each table, see
@@ -213,7 +213,7 @@ erDiagram
     }
 ```
 
-> **Note:** See [Architecture Overview §5](architecture-overview.md#5-sla-transition-contract) for how the CCE Compliance Service claims and processes `step_sla_state_transition` rows. It needs no lease table — the row lock is the claim.
+> **Note:** See [Architecture Overview §5](architecture-overview.md#5-sla-transition-contract) for how the CCE Step SLA Service claims and processes `step_sla_state_transition` rows. It needs no lease table — the row lock is the claim.
 
 ---
 
@@ -291,7 +291,7 @@ between them.
 
 The Protocol and Matcher services keep their own Flyway history tables —
 `flyway_schema_history_protocol` and `flyway_schema_history_matcher` — so neither ledger sees the
-other's migrations. The Compliance Service creates no tables and runs Flyway not at all; it validates
+other's migrations. The Step SLA Service creates no tables and runs Flyway not at all; it validates
 the mapping it was given (`ddl-auto: validate`) and fails fast if the schema it needs is absent.
 
 The Collector Service sets no `spring.flyway.table`, so its ledger is the **default**
@@ -528,8 +528,8 @@ the shared database directly — Matcher is not in that path.
 
 Records **protocol deviations** — three kinds, written by two services.
 
-- **`OVERDUE`** — the Compliance Service raises one when a step's due date is applied and the work was not recorded in time. The most common deviation by far: every step that passes its due date unrecorded takes one, including optional (`could`) steps, because running late is a reportable fact about them.
-- **`MISSED`** — the Compliance Service raises one when a `must` step passes its missed date still unrecorded. Mandatory-only: an optional step breaches nothing by never arriving, so it takes no `MISSED` deviation and no `MISSED` status.
+- **`OVERDUE`** — the Step SLA Service raises one when a step's due date is applied and the work was not recorded in time. The most common deviation by far: every step that passes its due date unrecorded takes one, including optional (`could`) steps, because running late is a reportable fact about them.
+- **`MISSED`** — the Step SLA Service raises one when a `must` step passes its missed date still unrecorded. Mandatory-only: an optional step breaches nothing by never arriving, so it takes no `MISSED` deviation and no `MISSED` status.
 - **`ORDER_VIOLATION`** — the Matcher Service raises one when a step completes while a mandatory prerequisite is still outstanding. The only deviation detected from an event rather than from a deadline, which is why it belongs to Matcher.
 
 When intelligence actions are configured on the step's PlanDefinition action, the `IntelligenceActionEvaluator` is invoked and the `intelligence_event_id` is populated with the published event's UUID.
@@ -687,7 +687,7 @@ Records each execution of an **intelligence action** (`PlanDefinition.action.act
 | B-tree Index | `idx_intelligence_event_log_protocol_instance` | `protocol_instance_id` — all events for a protocol instance. |
 | Partial B-tree | `idx_intelligence_event_log_published` | `published WHERE published = false` — unpublished events, for retry. |
 
-These three are exactly the filters the Compliance Service's API exposes. There is no index on
+These three are exactly the filters the Step SLA Service's API exposes. There is no index on
 `subject` or `step_instance_id`: nothing selects on either.
 
 ### Design Notes
@@ -711,7 +711,7 @@ exists without the other. The caveat is the same one that atomicity buys: out-of
 are not captured, so every lifecycle mutation must go through the service layer.
 
 **Two writers, and that is safe here.** The Matcher Service records enrolment, step creation and
-completion; the Compliance Service records each `sla_status` it applies. Append-only is what makes
+completion; the Step SLA Service records each `sla_status` it applies. Append-only is what makes
 that work — the two insert disjoint rows and neither updates the other's, so unlike `step_instance`
 there is no column to divide between them. Until 2.0.0 only Matcher wrote here, and every time-driven
 transition was missing as a result: a step that went overdue and was never completed had one row, its
@@ -759,7 +759,7 @@ Other properties they share:
 | `id` | `BIGSERIAL` | **NOT NULL** | sequence | Primary key, and insertion order. |
 | `step_instance_id` | `UUID` | **NOT NULL** | — | The step whose state changed. No FK. Backfill joins `step_instance` on it to recover `protocol_instance_id`. |
 | `step_status` | `VARCHAR` | **NOT NULL** | — | The step status *after* this transition. See [StepStatus](#stepstatus). Written by the Matcher Service. |
-| `sla_status` | `VARCHAR` | Yes | — | The SLA status *after* this transition. See [SlaStatus](#slastatus). **Nullable**, mirroring the column it copies: null on any row recorded before a threshold had fallen due, and on every row of a step with no SLA. Written by the Compliance Service. |
+| `sla_status` | `VARCHAR` | Yes | — | The SLA status *after* this transition. See [SlaStatus](#slastatus). **Nullable**, mirroring the column it copies: null on any row recorded before a threshold had fallen due, and on every row of a step with no SLA. Written by the Step SLA Service. |
 | `changed_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | When the transition was **recorded**. Caller-supplied, but every call site passes a processing timestamp: `step_instance.created_at` for the initial row, and `now()` for a completion or an SLA write. See the note below — this is not the clinical time. |
 
 | Type | Name | Details |
@@ -838,7 +838,7 @@ Every combination is meaningful, and `completed_at` / `due_date` are available f
 
 | Value | Trigger |
 |-------|---------|
-| `OVERDUE` | The Compliance Service writes `sla_status = OVERDUE` on the `DUE_DATE_REACHED` row. Never recorded by Matcher. |
+| `OVERDUE` | The Step SLA Service writes `sla_status = OVERDUE` on the `DUE_DATE_REACHED` row. Never recorded by Matcher. |
 | `MISSED` | The evaluator advances `sla_status` `OVERDUE` → `MISSED` on a `must` step. Also recorded by the evaluator. |
 | `ORDER_VIOLATION` | Step completed out of sequence (violates `relatedAction` ordering). |
 
@@ -974,7 +974,7 @@ For the `ORDER_VIOLATION` deviations Matcher records:
 {"incompletePrerequisites": ["vitals-recording"], "completedActionId": "treatment"}
 ```
 
-The shape of `OVERDUE` / `MISSED` metadata is defined by the CCE Compliance Service that writes them.
+The shape of `OVERDUE` / `MISSED` metadata is defined by the CCE Step SLA Service that writes them.
 
 
 ### action_definition — `definition`

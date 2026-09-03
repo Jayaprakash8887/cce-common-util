@@ -230,7 +230,7 @@ Appends a row to `protocol_instance_history` / `step_instance_history` for each 
 and there is no window where one exists without the other.
 
 Lives here rather than in one service because **both** write it: Matcher records enrolment, step
-creation and completion; the Compliance Service records each `sla_status` it applies. Append-only is
+creation and completion; the Step SLA Service records each `sla_status` it applies. Append-only is
 what makes two writers safe — they insert disjoint rows and neither updates the other's. Before
 Compliance wrote here, every time-driven transition was missing from the table, so a step that went
 overdue and was never completed had one history row instead of three.

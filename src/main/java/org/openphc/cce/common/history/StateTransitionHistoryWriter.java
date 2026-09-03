@@ -25,7 +25,7 @@ import java.time.OffsetDateTime;
  *
  * <h2>Two writers, by design</h2>
  * This lives in the shared library rather than in one service because both write here. Matcher records
- * enrolment, step creation and completion; the Compliance Service records each {@code sla_status} it
+ * enrolment, step creation and completion; the Step SLA Service records each {@code sla_status} it
  * applies. Before it did, every time-driven transition was missing from the history — a step that went
  * overdue and was never completed had one row (its creation) instead of three, and the table's claim to
  * be point-in-time-reconstructible did not hold.

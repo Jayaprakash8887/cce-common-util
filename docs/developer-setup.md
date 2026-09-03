@@ -84,7 +84,7 @@ Two consequences worth keeping in mind when adding to it:
    caller-supplied timestamp rather than overwriting it.
 2. Add the migration to whichever service **owns** that table's DDL — see
    [Data Dictionary §3](data-dictionary.md#3-ownership). Never add DDL to two services.
-3. Rebuild the consumers. The Compliance Service runs `ddl-auto: validate` and will refuse to start
+3. Rebuild the consumers. The Step SLA Service runs `ddl-auto: validate` and will refuse to start
    if its mapping and the schema disagree, which is the intended early warning.
 
 ## Testing conventions

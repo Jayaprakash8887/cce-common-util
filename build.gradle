@@ -1,7 +1,7 @@
 // ==============================================================================
 // cce-common-util
 // ==============================================================================
-// Code shared by cce-protocol-service, cce-matcher-service and cce-compliance-service.
+// Code shared by cce-protocol-service, cce-matcher-service and cce-step-sla-service.
 //
 // Deliberately NOT a Spring Boot application, and it owns no Flyway migration — each service still
 // owns the DDL for the tables it creates.

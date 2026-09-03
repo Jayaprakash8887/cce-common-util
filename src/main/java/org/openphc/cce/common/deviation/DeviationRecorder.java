@@ -47,7 +47,7 @@ public class DeviationRecorder {
      *
      * <p>Which types reach here depends on the caller: the Matcher Service records only
      * {@link DeviationType#ORDER_VIOLATION}, detected from the event itself, while the time-driven
-     * {@code OVERDUE} and {@code MISSED} deviations come from the Compliance Service, which owns the
+     * {@code OVERDUE} and {@code MISSED} deviations come from the Step SLA Service, which owns the
      * thresholds that produce them.
      */
     public DeviationResult recordDeviation(StepInstance step, DeviationType deviationType) {

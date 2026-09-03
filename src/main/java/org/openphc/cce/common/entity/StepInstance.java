@@ -44,7 +44,7 @@ public class StepInstance {
      *
      * <p><strong>Nullable, and null is meaningful:</strong> timeliness has not been judged yet — no
      * threshold has fallen due and the step has not been completed either, so there is nothing to judge
-     * it on. A step with no due date at all stays null for good. Written only by the Compliance Service,
+     * it on. A step with no due date at all stays null for good. Written only by the Step SLA Service,
      * as it applies {@code step_sla_state_transition} rows: at a threshold for a step still outstanding,
      * or on the next sweep after completion, when {@code completed_at} settles the answer.
      */

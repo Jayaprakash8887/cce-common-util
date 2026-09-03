@@ -12,10 +12,10 @@ package org.openphc.cce.common.enums;
  * {@code PENDING} was removed from {@link SlaStatus} and a crossed threshold stopped implying a single
  * destination — crossing the due date lands a completed-on-time step on {@link SlaStatus#MET}, not
  * {@link SlaStatus#OVERDUE}. What the row records is which deadline fell; what that means for the step
- * is the Compliance Service's judgement, made against the step as it finds it.
+ * is the Step SLA Service's judgement, made against the step as it finds it.
  *
  * <p>These names are the contract with that service: Matcher writes them to
- * {@code step_sla_state_transition.transition_type}, and the Compliance Service reads them to know which
+ * {@code step_sla_state_transition.transition_type}, and the Step SLA Service reads them to know which
  * deadline fell and which deviation a breach of it records.
  *
  * @see org.openphc.cce.common.entity.StepSlaStateTransition
