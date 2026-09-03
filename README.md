@@ -30,7 +30,7 @@ org.openphc.cce.common
 ├── entity/      10 shared tables (+ one composite key type)
 ├── repository/  Spring Data interfaces for them
 ├── fhir/        PlanDefinitionParser, ParsedProtocolCache, FhirExpressionEvaluator,
-│                ClinicalEventTimeExtractor, TriggerPath
+│                ClinicalEventTimeExtractor, ResourceTypeDetector, TriggerPath
 ├── sla/         SlaThresholdReader — a step's deadlines, read back
 ├── deviation/   DeviationRecorder
 ├── history/     StateTransitionHistoryWriter

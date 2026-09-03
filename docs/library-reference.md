@@ -34,7 +34,8 @@ declares, whether or not it uses it — see [§7](#what-a-consumer-gets-whether-
 
 ```java
 @Configuration
-@Import({FhirConfig.class, ClinicalEventTimeExtractor.class, KafkaTopicProperties.class})
+@Import({FhirConfig.class, ClinicalEventTimeExtractor.class, ResourceTypeDetector.class,
+        KafkaTopicProperties.class})
 public class CommonUtilConfig { }
 ```
 
@@ -153,6 +154,21 @@ separate copies until 2.0.0, and the copies had drifted: for an `Encounter` carr
 collector read `period.end` while the matcher read `period.start`, so the audit trail and the SLA
 clock disagreed about when the visit happened. The two tables were reconciled by hand first, which is
 why the move itself changed no behaviour — holding one copy is what stops them drifting again.
+
+### `ResourceTypeDetector`
+
+The `resourceType` discriminator off an inbound payload, mapped to the HAPI R4 `ResourceType` enum.
+Two lines of logic, which is why both services had inlined their own: the Collector needs the type to
+reject a non-FHIR resource at validation and to pick a clinical-time field, and the Matcher needs it
+as the first coordinate of a Tier 1 trigger lookup.
+
+The copies disagreed on the edges rather than the answer — one resolved through
+`ResourceType.fromCode`, the other through `ResourceType.valueOf` (identical for all 146 R4 types),
+and only one tolerated a null node. What drifted was each service's notion of an *unrecognized* type,
+which is the single decision this class exists to make. It never throws: an absent, blank,
+non-string or unknown value returns null, and the caller decides what that means — a validation error
+in the Collector, an event that matches no trigger in the Matcher, since non-FHIR
+`application/json` payloads reach the same code path.
 
 ### `FhirExpressionEvaluator`
 
