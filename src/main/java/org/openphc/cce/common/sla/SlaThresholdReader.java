@@ -13,7 +13,7 @@ import java.util.UUID;
 /**
  * Reads a step's SLA thresholds back from its {@code step_sla_state_transition} rows.
  *
- * <p>Read-only, and shared: Compliance needs a step's deadlines to build the {@code dueDate} and
+ * <p>Read-only, and shared: Step SLA needs a step's deadlines to build the {@code dueDate} and
  * {@code daysOverdue} of an intelligence rule context, and Matcher needs them when scheduling dependent
  * steps. Only the Matcher Service <em>writes</em> the schedule, so the write path deliberately lives
  * there and not here; nothing in this library can invent a deadline.

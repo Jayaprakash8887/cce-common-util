@@ -67,7 +67,7 @@ that only ever had one caller.
 
 Two consequences worth keeping in mind when adding to it:
 
-- The Protocol, Matcher and Compliance services instantiate every bean declared here, because they
+- The Protocol, Matcher and Step SLA services instantiate every bean declared here, because they
   widen their component scan to `org.openphc.cce`. A new `@Service` appears in all three whether they
   use it or not.
 - A new `@ConfigurationProperties` or `@Value` default becomes live configuration in all three.

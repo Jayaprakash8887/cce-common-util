@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Reading a step's thresholds back. Shared by the Matcher and Compliance services, so this is the one
+ * Reading a step's thresholds back. Shared by the Matcher and Step SLA services, so this is the one
  * place the interpretation of a schedule is pinned down.
  */
 @ExtendWith(MockitoExtension.class)

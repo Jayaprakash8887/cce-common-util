@@ -52,8 +52,32 @@ public class StepInstance {
     @Column(name = "sla_status")
     private SlaStatus slaStatus;
 
-    // SLA thresholds are not stored here. Each one is a step_sla_state_transition row carrying its
-    // process_by time — see StepSlaScheduleService, which writes them and reads them back.
+    /**
+     * The deadline this step's work was expected to be recorded by, as the protocol definition sets it.
+     *
+     * <p>The functional deadline, and what {@link SlaStatus#MET} is measured against: the Step SLA
+     * Service settles a step as on time when {@link #completedAt} falls before this. A breach is not
+     * asked of it — {@link SlaStatus#OVERDUE} and {@link SlaStatus#MISSED} are decided by the
+     * {@code process_by} of the transition row that detects them, which is what a schedule is for.
+     * Written once by the Matcher Service when it creates the step, in the same transaction as the
+     * step's {@code step_sla_state_transition} rows, and never updated — a deadline that moved would
+     * silently redate every judgement already made against it.
+     *
+     * <p>Distinct from the {@code process_by} of the step's {@code DUE_DATE_REACHED} row, which the two
+     * carry the same value as. That row schedules <em>when the sweep looks at this step</em>; a retry
+     * defers it through {@code next_attempt_at}, and it exists to be claimed, marked processed and
+     * counted against. This column says what the step was <em>due</em>. Keeping them apart is what stops
+     * a change to the sweep's scheduling from changing what "on time" means.
+     *
+     * <p>Nullable: a step created from its own trigger has no deadline to be judged against, and stays
+     * null along with its {@code sla_status}.
+     */
+    @Column(name = "due_date")
+    private OffsetDateTime dueDate;
+
+    // The missed date is not stored here: it is the process_by of the step's MISSED_DATE_REACHED row,
+    // which is both the schedule for writing MISSED off and the threshold that verdict is measured
+    // against — see StepSlaScheduleService.
 
     @Column(name = "completed_at")
     private OffsetDateTime completedAt;

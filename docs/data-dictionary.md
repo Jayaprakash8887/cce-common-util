@@ -262,16 +262,16 @@ log that duplicated half of them without the other half's detail.
 
 | Table | Migration owner | Writers | Readers |
 |---|---|---|---|
-| `protocol_definition` | Protocol | Protocol | Matcher, Compliance |
-| `action_definition` | Protocol | Protocol | Matcher, Compliance |
+| `protocol_definition` | Protocol | Protocol | Matcher, Step SLA |
+| `action_definition` | Protocol | Protocol | Matcher, Step SLA |
 | `trigger_index` | Protocol | Protocol | Matcher |
-| `protocol_instance` | Matcher | Matcher | Compliance |
-| `step_instance` | Matcher | Matcher, **Compliance** (see below) | both |
-| `step_sla_state_transition` | Matcher | Matcher (inserts), Compliance (claims) | both |
-| `deviation` | Matcher | Matcher, Compliance | both |
-| `intelligence_event_log` | Matcher | Matcher, Compliance | Compliance |
+| `protocol_instance` | Matcher | Matcher | Step SLA |
+| `step_instance` | Matcher | Matcher, **Step SLA** (see below) | both |
+| `step_sla_state_transition` | Matcher | Matcher (inserts), Step SLA (claims) | both |
+| `deviation` | Matcher | Matcher, Step SLA | both |
+| `intelligence_event_log` | Matcher | Matcher, Step SLA | Step SLA |
 | `protocol_instance_history` | Matcher | Matcher | — (CDC only) |
-| `step_instance_history` | Matcher | Matcher, Compliance | — (CDC only) |
+| `step_instance_history` | Matcher | Matcher, Step SLA | — (CDC only) |
 | `matcher_event_log` | Matcher | Matcher | Matcher |
 | `facility` | Matcher | Matcher, programme staff (direct SQL) | Matcher |
 | `inbound_event_log` | Collector | Collector | — (CDC only) |
@@ -307,7 +307,8 @@ giving it a named ledger like the other two.
 | Column | Writer | Meaning |
 |---|---|---|
 | `step_status` | Matcher only | whether the expected event arrived (`NOT_STARTED` → `COMPLETED`) |
-| `sla_status` | **Compliance only** | whether the deadline was met (null → `OVERDUE` → `MISSED`, or null → `MET`). Matcher records `completed_at`; Compliance alone judges timeliness from it. |
+| `due_date` | Matcher only | the deadline the work was expected by, written once at step creation and never updated; `MET` is judged against it |
+| `sla_status` | **Step SLA only** | whether the deadline was met (null → `OVERDUE` → `MISSED`, or null → `MET`). Matcher records `completed_at`; Step SLA alone judges timeliness from it. |
 
 The split is the point of the design: *did the work happen* and *did it happen on time* are
 independent facts, and merging them into one column made states like "completed, but late"
@@ -317,11 +318,11 @@ for the state machines.
 `step_instance_history`, `deviation` and `intelligence_event_log` are also written by both, but they
 are **append-only**: the two services insert disjoint rows and neither updates the other's, so there
 is no shared mutable state to coordinate. Matcher records step creation and completion in history;
-Compliance records each `sla_status` it writes. Without that second writer the time-driven half of
+Step SLA records each `sla_status` it writes. Without that second writer the time-driven half of
 every step's timeline would be missing from the table and from the CDC stream downstream of it.
 
-Deployment order follows the migration column: **Protocol → Matcher → Compliance**. Matcher's
-migration declares foreign keys into `protocol_definition`, and Compliance validates against tables
+Deployment order follows the migration column: **Protocol → Matcher → Step SLA**. Matcher's
+migration declares foreign keys into `protocol_definition`, and Step SLA validates against tables
 both of the others created.
 
 ---
@@ -404,6 +405,7 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | `repeat_index` | `INTEGER` | **NOT NULL** | `0` | Zero-based occurrence counter for repeating actions. Non-repeating actions always have index 0. |
 | `step_status` | `VARCHAR` | **NOT NULL** | — | Whether the expected event has been received. See [StepStatus](#stepstatus). |
 | `sla_status` | `VARCHAR` | Yes | — | Whether the deadline has been met. Null until it has been judged — see [SlaStatus](#slastatus). |
+| `due_date` | `TIMESTAMPTZ` | Yes | — | The deadline the work was expected to be recorded by, as the protocol definition sets it. Written once by the Matcher Service at step creation and never updated; what `MET` is judged against. `OVERDUE` and `MISSED` are judged against the `process_by` of the row that detects them — see the note below. Null for a step created from its own trigger, which has no deadline. |
 | `completed_at` | `TIMESTAMPTZ` | Yes | — | **Clinical occurrence time** of the completing event (when the act happened), not ingestion time — clamped to `now()`. Drives completion status and dependent steps' due dates. `NULL` for non-completed steps. See clinical event time extraction, in the Matcher Service repo. |
 | `completed_by_source` | `VARCHAR` | Yes | — | CloudEvent `source` that completed this step. |
 | `matched_event_id` | `UUID` | Yes | — | Foreign key → `matcher_event_log.id`. Links to the event that completed this step. |
@@ -411,10 +413,23 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | `created_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Record creation timestamp. |
 | `updated_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Last modification timestamp. |
 
-> **SLA thresholds are not stored here.** Each one is a row in
-> [`step_sla_state_transition`](#7-step_sla_state_transition) carrying its `process_by` time. That keeps
-> the evaluator's working set in a table that shrinks as work is processed, instead of requiring a
+> **The due date is here; the schedule that acts on it is not.** `due_date` is a fact about the step —
+> what the work was due by — and it is what `MET` is measured against: whether the work was *on time* is
+> a question about the step, so it is asked of the step. A *breach* is what a schedule exists to detect,
+> so `OVERDUE` and `MISSED` are measured against the `process_by` of the row that detects them. The
+> schedule for acting on each threshold is a row in
+> [`step_sla_state_transition`](#7-step_sla_state_transition) carrying its `process_by` time, which
+> keeps the evaluator's working set in a table that shrinks as work is processed instead of requiring a
 > rescan of every step row behind a watermark cursor.
+>
+> The `DUE_DATE_REACHED` row's `process_by` holds the same instant as `due_date`, and the two are not
+> interchangeable: that row is fetched, deferred through `next_attempt_at` on failure, marked processed
+> and counted as backlog, so reading it as the deadline would make what counts as *on time* a
+> consequence of how the sweep is scheduled. Needing `process_by` to stay immutable — which is why
+> `next_attempt_at` exists beside it — is the same pressure seen from the other side.
+>
+> The missed date is not stored on the step. Its row's `process_by` is both that verdict's schedule and
+> its threshold, so it carries no second meaning to hold apart.
 
 ### Constraints & Indexes
 
@@ -428,7 +443,7 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | Check | — | `required_behavior IN ('must', 'could', 'must-unless-documented')` |
 | B-tree Index | `idx_step_instance_protocol` | `protocol_instance_id` — All steps within a protocol instance. |
 | Partial B-tree | `idx_step_instance_not_started` | `(protocol_instance_id, action_id) WHERE step_status = 'NOT_STARTED'` — locating the step a late-arriving event should complete. |
-| Partial B-tree | `idx_step_instance_completed_unjudged` | `(id) WHERE step_status = 'COMPLETED' AND completed_at IS NOT NULL AND (sla_status IS NULL OR sla_status = 'OVERDUE')` — completed steps whose SLA is still unsettled. Compliance claims their transition rows from here without waiting for the deadline; a sweep empties the set. |
+| Partial B-tree | `idx_step_instance_completed_unjudged` | `(id) WHERE step_status = 'COMPLETED' AND completed_at IS NOT NULL AND (sla_status IS NULL OR sla_status = 'OVERDUE')` — completed steps whose SLA is still unsettled. Step SLA claims their transition rows from here without waiting for the deadline; a sweep empties the set. |
 
 ### Status Machines
 
@@ -767,7 +782,7 @@ Other properties they share:
 | Primary Key | `step_instance_history_pkey` | `id` |
 
 Both status columns appear on every row, whichever service wrote it: a row is a snapshot of the step
-after the change, not a record of which field moved. A row written by Compliance therefore repeats the
+after the change, not a record of which field moved. A row written by Step SLA therefore repeats the
 `step_status` Matcher last set, and vice versa.
 
 **`changed_at` is ingestion time, not clinical time.** Unlike `protocol_instance_history`, whose first
@@ -817,7 +832,7 @@ reflects when the act happened, not when the event was ingested.
 
 | Value | Condition | Transitions From | Transitions To |
 |-------|-----------|-----------------|----------------|
-| *(null)* | Nothing to judge on yet: no threshold has fallen due, and the step has not completed either. Transient for a completed step — the next Compliance sweep settles it from `completed_at`. Also the permanent state of a step with no due date, where no SLA applies. **Not an enum value**: the column is nullable, and null is the initial state. | *(initial)* | `OVERDUE`, `MET` |
+| *(null)* | Nothing to judge on yet: no threshold has fallen due, and the step has not completed either. Transient for a completed step — the next Step SLA sweep settles it from `completed_at`. Also the permanent state of a step with no due date, where no SLA applies. **Not an enum value**: the column is nullable, and null is the initial state. | *(initial)* | `OVERDUE`, `MET` |
 | `OVERDUE` | The due threshold fell and the work was not recorded by then. An `OVERDUE` deviation is recorded. | *(null)* | `MISSED` |
 | `MISSED` | Past the missed threshold and the event never arrived. A `MISSED` deviation is recorded. | `OVERDUE` | *(terminal)* |
 | `MET` | The event arrived before the due threshold. Written only from null, on the `DUE_DATE_REACHED` row, which is claimed as soon as the completion is recorded rather than at the due date — a step already found `OVERDUE` is never relabelled as on time. | *(null)* | *(terminal)* |

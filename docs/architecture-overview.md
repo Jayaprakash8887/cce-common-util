@@ -87,7 +87,7 @@ could fail because the definitional plane was restarting.
 
 ## 3. The intelligence trigger
 
-Both the Matcher and Compliance services publish to `cce.intelligence.triggers`, because both can
+Both the Matcher and Step SLA services publish to `cce.intelligence.triggers`, because both can
 be the proximate cause of an intelligence action: the Matcher when a step completes or an
 `ORDER_VIOLATION` is detected, the Step SLA Service when a deadline passes. The evaluation logic
 is identical, so it lives here once
@@ -147,7 +147,7 @@ the column. A step's SLA has exactly one author and one source of evidence. See
 [Data Dictionary §3](data-dictionary.md#3-ownership).
 
 Single ownership does not mean a completion waits for its deadline to be judged. `completed_at` fixes
-the answer the moment it is recorded, so Compliance settles a completed step on its next sweep rather
+the answer the moment it is recorded, so Step SLA settles a completed step on its next sweep rather
 than at the threshold — an early completion reads `MET` seconds later, not weeks later. §5 is how.
 
 What each threshold means for a step is the SLA transition contract, in §5.
@@ -161,8 +161,8 @@ must act on them later, without polling every step in the database. The `step_sl
 table is that handoff — one row per threshold, inserted at step creation, carrying the time it
 becomes actionable.
 
-**Matcher inserts. Compliance claims.** A row is claimed with `FOR UPDATE SKIP LOCKED`, which is
-what lets every Compliance replica poll the same table concurrently: a row locked by one replica is
+**Matcher inserts. Step SLA claims.** A row is claimed with `FOR UPDATE SKIP LOCKED`, which is
+what lets every Step SLA replica poll the same table concurrently: a row locked by one replica is
 invisible to the others rather than contended. There is no lease table, no heartbeat and no leader
 election — the row lock *is* the claim, held for the length of the transaction that applies it. A
 replica that dies mid-batch releases its locks on connection loss and the work is immediately
@@ -216,7 +216,7 @@ A row that fails is retried with exponential backoff (`2^attempts`, capped), not
 
 ## 6. Deployment order
 
-**Protocol → Matcher → Compliance**, following the migration ownership in
+**Protocol → Matcher → Step SLA**, following the migration ownership in
 [Data Dictionary §3](data-dictionary.md#3-ownership). Matcher's migration declares foreign keys into
 tables the Protocol Service creates, and the Step SLA Service validates its JPA mapping at
 startup against tables both of the others created — it will fail fast rather than start against a
