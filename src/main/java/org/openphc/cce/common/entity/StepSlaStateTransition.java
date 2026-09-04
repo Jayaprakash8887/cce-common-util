@@ -27,11 +27,13 @@ import java.util.UUID;
  *
  * <p>That split has one consequence worth stating: a step may complete before its row is processed, so
  * the row outlives the state it was scheduled against. Such a row is not meaningless — it is what makes
- * the judgement possible at all. The evaluator compares {@code step_instance.completed_at} against this
- * row's {@code process_by} rather than consulting the wall clock, so a step completed before the due
- * date settles as {@code MET} and one completed after it as {@code OVERDUE} with a deviation. Matcher
- * never judges timeliness itself, which is why there is no question of the two services overwriting
- * each other.
+ * a breach detectable at all. The evaluator compares {@code step_instance.completed_at} against this
+ * row's {@code process_by} rather than consulting the wall clock, so a step completed after the due
+ * date settles as {@code OVERDUE} with a deviation. One completed before it breached nothing and this
+ * row records nothing: {@code MET} is settled from {@code step_instance.due_date} by a sweep of the
+ * steps themselves, timeliness being a statement about the step rather than a threshold it crossed.
+ * Matcher never judges timeliness itself, which is why there is no question of the two services
+ * overwriting each other.
  */
 @Entity
 @Table(name = "step_sla_state_transition", uniqueConstraints = @UniqueConstraint(
@@ -57,9 +59,9 @@ public class StepSlaStateTransition {
 
     // No from_status / to_status columns. They encoded a fixed status pair per transition type, which
     // stopped holding once PENDING was removed and a crossed threshold stopped implying one
-    // destination: the due date lands a completed-on-time step on MET and an outstanding one on
-    // OVERDUE. transition_type names the deadline; what it means for the step is decided when the row
-    // is applied, and the outcome is readable from step_instance.sla_status.
+    // destination: the due date leaves an outstanding step OVERDUE and a completed-on-time one
+    // untouched. transition_type names the deadline; what it means for the step is decided when the
+    // row is applied, and the outcome is readable from step_instance.sla_status.
 
     /**
      * Absolute time this transition becomes due — the clinical-time-anchored threshold computed when

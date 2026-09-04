@@ -189,13 +189,18 @@ the deadline:
 |---|---|---|---|
 | `DUE_DATE_REACHED` | not completed | `OVERDUE` | `OVERDUE` |
 | `DUE_DATE_REACHED` | `completed_at >= process_by` | `OVERDUE` | `OVERDUE` |
-| `DUE_DATE_REACHED` | `completed_at < process_by` | `MET` | — |
+| `DUE_DATE_REACHED` | `completed_at < process_by` | *unchanged* | — |
 | `MISSED_DATE_REACHED` | not completed | `MISSED` (`must` only) | `MISSED` (`must` only) |
 | `MISSED_DATE_REACHED` | `completed_at >= process_by` | `MISSED` (`must` only) | `MISSED` (`must` only) |
 | `MISSED_DATE_REACHED` | `completed_at < process_by` | *unchanged* | — |
 
-The last row is the one to be careful about. A step completed *between* its two thresholds did not
-breach the missed date, but it is not `MET` either — it is the `OVERDUE` the due-date row made it.
+A transition row only ever records a breach. `MET` is not in the table because no row writes it: the
+Step SLA Service sweeps `step_instance` for completed steps whose `completed_at` beat their `due_date`
+and records it from there, needing no schedule to ask a question about the step. A row whose threshold
+was kept is consumed.
+
+Which is also why a step completed *between* its two thresholds is not `MET`. It breached neither, and
+breaching neither is not the same claim as having been on time.
 "Did not breach this threshold" and "met its SLA" coincide only at the due date, which is why `MET` is
 written on that row alone, and only over a null.
 

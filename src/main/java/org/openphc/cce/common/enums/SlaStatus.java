@@ -44,7 +44,11 @@ public enum SlaStatus {
     MISSED,
 
     /**
-     * The SLA was satisfied — the event arrived before the due threshold. Terminal.
+     * The SLA was satisfied — the event arrived before the step's {@code due_date}. Terminal.
+     *
+     * <p>Written by the Step SLA Service's sweep of {@code step_instance}, not by applying a
+     * {@code step_sla_state_transition} row: being on time is a statement about the step, answerable
+     * from its own {@code completed_at} and {@code due_date} with no threshold to cross.
      */
     MET
 }
