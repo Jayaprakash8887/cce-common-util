@@ -444,7 +444,7 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | Check | — | `required_behavior IN ('must', 'could', 'must-unless-documented')` |
 | B-tree Index | `idx_step_instance_protocol` | `protocol_instance_id` — All steps within a protocol instance. |
 | Partial B-tree | `idx_step_instance_not_started` | `(protocol_instance_id, action_id) WHERE step_status = 'NOT_STARTED'` — locating the step a late-arriving event should complete. |
-| Partial B-tree | `idx_step_instance_completed_unjudged` | `(id) WHERE step_status = 'COMPLETED' AND completed_at IS NOT NULL AND (sla_status IS NULL OR sla_status = 'OVERDUE')` — completed steps whose SLA is still unsettled. Step SLA claims their transition rows from here without waiting for the deadline; a sweep empties the set. |
+| Partial B-tree | `idx_step_instance_completed_unjudged` | `(id) WHERE step_status = 'COMPLETED' AND completed_at IS NOT NULL AND (sla_status IS NULL OR sla_status = 'OVERDUE')` — completed steps whose SLA is still unsettled, read two ways by Step SLA: the null half is swept directly to record `MET` for work that beat its `due_date`; the `OVERDUE` half is where it takes an already-late step's remaining missed-date row ahead of that date. Both consumers empty the set. |
 
 ### Status Machines
 
