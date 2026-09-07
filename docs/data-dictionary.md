@@ -89,6 +89,7 @@ erDiagram
         int repeat_index
         varchar step_status
         varchar sla_status
+        timestamptz due_date
         timestamptz completed_at
         varchar completed_by_source
         uuid matched_event_id FK
