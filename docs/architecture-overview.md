@@ -70,7 +70,7 @@ flowchart TB
 
     PS -->|"writes definitions<br/>+ trigger index"| DB[("ccedb<br/>PostgreSQL 16")]
     MS -->|"reads definitions<br/>writes instances, steps,<br/>SLA schedule"| DB
-    CS -->|" <br/>claims due transitions,<br/>advances sla_status,<br/>records deviations"| DB
+    CS -->|" <br/>fetches due transitions,<br/>advances sla_status,<br/>records deviations"| DB
 
     MS --> Topic[/"Kafka<br/>cce.intelligence.triggers"/]
     CS --> Topic
@@ -79,7 +79,7 @@ flowchart TB
 
 There is no synchronous call between the three services, and no Kafka hop between them either. They
 coordinate entirely through `ccedb`: the Protocol Service writes rows the Matcher Service reads, and
-the Matcher Service writes the `step_sla_state_transition` rows the Step SLA Service claims. This
+the Matcher Service writes the `step_sla_state_transition` rows the Step SLA Service fetches. This
 is deliberate — a request-response dependency between them would mean an inbound clinical event
 could fail because the definitional plane was restarting.
 
@@ -162,29 +162,30 @@ must act on them later, without polling every step in the database. The `step_sl
 table is that handoff — one row per threshold, inserted at step creation, carrying the time it
 becomes actionable.
 
-**Matcher inserts. Step SLA claims.** A row is claimed with `FOR UPDATE SKIP LOCKED`, which is
+**Matcher inserts. Step SLA fetches.** A row is fetched under `FOR UPDATE SKIP LOCKED`, which is
 what lets every Step SLA replica poll the same table concurrently: a row locked by one replica is
 invisible to the others rather than contended. There is no lease table, no heartbeat and no leader
-election — the row lock *is* the claim, held for the length of the transaction that applies it. A
-replica that dies mid-batch releases its locks on connection loss and the work is immediately
-claimable again.
+election — the row lock *is* what reserves the row, held for the length of the transaction that applies
+it. A replica that dies mid-batch releases its locks on connection loss and the work is immediately
+available again.
 
-Claim and apply happen in **one** transaction. Claiming in one and applying in another would leave a
+Fetch and apply happen in **one** transaction. Fetching in one and applying in another would leave a
 window where a row is marked taken but not yet acted on, which is exactly the state a crash makes
 permanent.
 
-**A row is claimable for one reason.** Its `next_attempt_at` has passed — the deadline fell and the work
+**A row is fetched for one reason.** Its `next_attempt_at` has passed — the deadline fell and the work
 has to be judged against it. Nothing pulls a step's remaining rows forward because the step completed or
 was judged: a step already settled keeps its unspent schedule until those dates arrive, and each row is
 consumed then, recording nothing. What an on-time completion does *not* have to wait for is a schedule —
 Step SLA sweeps `step_instance` directly for it, which is what keeps `MET` from sitting at null until a
 due date weeks away. That sweep is cheap rather than a scan of every step, because
-`idx_step_instance_completed_unjudged` covers exactly the completed-but-unsettled set — which a sweep
-empties.
+`idx_step_instance_completed_unjudged` covers the completed-but-unsettled set — a small fraction of the
+table, though not one that fully drains (see the index note in the
+[Data Dictionary §6](data-dictionary.md#6-step_instance)).
 
 What the applier does depends on the step it finds, not on when it runs. It compares
 `step_instance.completed_at` against the row's `process_by` and never consults the wall clock — and
-`next_attempt_at`, the gate that decided the row was claimable, plays no part in the judgement at all.
+`next_attempt_at`, the gate that decided the row was ready, plays no part in the judgement at all.
 So a row deferred by a failure and applied late reaches exactly the verdict it would have reached on
 time:
 
