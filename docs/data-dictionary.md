@@ -445,7 +445,7 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | Check | — | `required_behavior IN ('must', 'could', 'must-unless-documented')` |
 | B-tree Index | `idx_step_instance_protocol` | `protocol_instance_id` — All steps within a protocol instance. |
 | Partial B-tree | `idx_step_instance_not_started` | `(protocol_instance_id, action_id) WHERE step_status = 'NOT_STARTED'` — locating the step a late-arriving event should complete. |
-| Partial B-tree | `idx_step_instance_completed_unjudged` | `(id) WHERE step_status = 'COMPLETED' AND completed_at IS NOT NULL AND (sla_status IS NULL OR sla_status = 'OVERDUE')` — completed steps whose SLA is still unsettled, read two ways by Step SLA: the null half is swept directly to record `MET` for work that beat its `due_date`; the `OVERDUE` half is where it takes an already-late step's remaining missed-date row ahead of that date. Both consumers empty the set. |
+| Partial B-tree | `idx_step_instance_completed_unjudged` | `(id) WHERE step_status = 'COMPLETED' AND completed_at IS NOT NULL AND (sla_status IS NULL OR sla_status = 'OVERDUE')` — completed steps whose SLA is still unsettled. Step SLA sweeps the null half directly to record `MET` for work that beat its `due_date`, and that sweep empties it. The `OVERDUE` half has no consumer since the early fetch of an already-late step's remaining rows was dropped — those rows are now taken when their own deadline arrives — so the predicate could be narrowed to `sla_status IS NULL` whenever the index is next revised. |
 
 ### Status Machines
 
@@ -521,7 +521,7 @@ the shared database directly — Matcher is not in that path.
 | Unique | `step_sla_state_transition_step_type_key` | `(step_instance_id, transition_type)` — a step has at most one row per type, making creation idempotent. Its leading column also serves lookups by step, so no separate index on `step_instance_id`. |
 | Foreign key | `..._step_instance_id_fkey` | → `step_instance(id)` |
 | Check | `..._type_check` | `transition_type IN ('DUE_DATE_REACHED', 'MISSED_DATE_REACHED')` |
-| Partial B-tree | `idx_sslt_due` | `next_attempt_at WHERE is_processed = FALSE` — the evaluator's deadline-driven claim path, and the only hot index. Scoped to the pending backlog however large the retained history grows. The second claim path, for rows of already-completed steps, drives off `idx_step_instance_completed_unjudged` instead and reaches these rows by `step_instance_id`. |
+| Partial B-tree | `idx_sslt_due` | `next_attempt_at WHERE is_processed = FALSE` — the evaluator's claim path, and the only hot index. It is also the only one: a row becomes claimable when this gate passes and for no other reason. Scoped to the pending backlog however large the retained history grows. |
 
 ### Design Notes
 

@@ -147,8 +147,9 @@ the column. A step's SLA has exactly one author and one source of evidence. See
 [Data Dictionary §3](data-dictionary.md#3-ownership).
 
 Single ownership does not mean a completion waits for its deadline to be judged. `completed_at` fixes
-the answer the moment it is recorded, so Step SLA settles a completed step on its next sweep rather
-than at the threshold — an early completion reads `MET` seconds later, not weeks later. §5 is how.
+the answer the moment it is recorded, so a step that beat its `due_date` is recorded `MET` on Step SLA's
+next sweep rather than at the threshold — seconds later, not weeks. A breach does still wait for its
+schedule to come round, because the threshold is what it is measured against. §5 is how.
 
 What each threshold means for a step is the SLA transition contract, in §5.
 
@@ -172,18 +173,20 @@ Claim and apply happen in **one** transaction. Claiming in one and applying in a
 window where a row is marked taken but not yet acted on, which is exactly the state a crash makes
 permanent.
 
-**A row is claimable for either of two reasons.** Its `next_attempt_at` has passed — the deadline fell
-and the work has to be judged against it. Or its step is already `COMPLETED` with a `completed_at`: then
-nothing about it can change, both thresholds were written at creation, and the deadline arriving later
-would only confirm what is already decided. The two claims are disjoint, so no row is applied twice, and
-the second is what keeps an on-time completion from sitting at null until its due date. It is a cheap
-claim rather than a scan of every step, because `idx_step_instance_completed_unjudged` covers exactly the
-completed-but-unsettled set — which a sweep empties.
+**A row is claimable for one reason.** Its `next_attempt_at` has passed — the deadline fell and the work
+has to be judged against it. Nothing pulls a step's remaining rows forward because the step completed or
+was judged: a step already settled keeps its unspent schedule until those dates arrive, and each row is
+consumed then, recording nothing. What an on-time completion does *not* have to wait for is a schedule —
+Step SLA sweeps `step_instance` directly for it, which is what keeps `MET` from sitting at null until a
+due date weeks away. That sweep is cheap rather than a scan of every step, because
+`idx_step_instance_completed_unjudged` covers exactly the completed-but-unsettled set — which a sweep
+empties.
 
 What the applier does depends on the step it finds, not on when it runs. It compares
-`step_instance.completed_at` against the row's `process_by` and never consults the wall clock, which is
-precisely what makes applying a completed step's rows early give the same verdict as applying them at
-the deadline:
+`step_instance.completed_at` against the row's `process_by` and never consults the wall clock — and
+`next_attempt_at`, the gate that decided the row was claimable, plays no part in the judgement at all.
+So a row deferred by a failure and applied late reaches exactly the verdict it would have reached on
+time:
 
 | Row | Step when applied | `sla_status` | Deviation |
 |---|---|---|---|
