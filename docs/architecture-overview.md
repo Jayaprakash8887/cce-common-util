@@ -9,7 +9,7 @@ them restates what is here.
 |---|---|
 | **cce-protocol-service** | The definitional plane. Loads FHIR PlanDefinitions and ActivityDefinitions, builds the trigger index. |
 | **cce-matcher-service** | The event plane. Matches inbound clinical events, enrols patients, creates and completes steps. |
-| **cce-step-sla-service** | The time plane. Applies SLA transitions as deadlines pass, records the resulting deviations. |
+| **cce-step-sla-service** | The time plane. Applies SLA transitions as deadlines pass, records the resulting deviations.
 | **cce-common-util** | This library. Shared entities, repositories, FHIR parsing, and the services that operate on them. |
 
 ---
@@ -221,6 +221,32 @@ The applier never writes `step_status`.
 
 A row that fails is retried with exponential backoff (`2^attempts`, capped), not discarded.
 
+### Event Replay
+
+The contract above carries one condition the code cannot enforce, and operators must.
+
+The Step SLA Service concludes that work has not happened by finding no completion on `step_instance`.
+That inference is only sound once every event that could have completed the step has been matched. So
+while the Matcher Service still has a backlog to work through — events re-published after a fix, a
+historical backfill, or a long outage that left its consumer group far behind — **the Step SLA Service
+must be stopped.** Left running, it reads not-yet-matched as not-done and records `OVERDUE` or
+`MISSED` against steps whose completing event is still in the queue. **Event Replay** is the name for
+any such run; use it when coordinating one.
+
+Replaying historical events makes this the default outcome rather than a race. Thresholds are anchored
+to clinical time, so a step created from a month-old event is scheduled with `process_by` already in
+the past, and its rows are due the moment they are written — long before the completing event, later in
+the same backlog, has been matched.
+
+None of it can be walked back. `sla_status` writes are forward-only and `MET` is written only over a
+null, so the wrong verdict stands; the deviation is de-duplicated, so it is not reconsidered; and the
+intelligence event has already been published, so a clinician has already been alerted.
+
+Waiting costs nothing but latency. The judgement never consults the wall clock, so a row applied days
+late reaches exactly the verdict it would have reached on time. The runbook — how to stop the service,
+how to tell the Matcher Service is caught up, and what to do if the sequence was missed — is in the
+Step SLA Service repo's deployment guide.
+
 ---
 
 ## 6. Deployment order
@@ -232,6 +258,9 @@ startup against tables both of the others created — it will fail fast rather t
 schema that cannot serve it.
 
 Each service's own deployment steps are in its repository's deployment guide.
+
+Deploy order is not the only sequence that matters. [Event Replay](#event-replay) above is the runtime
+one, and unlike this it fails silently rather than fast.
 
 ---
 
