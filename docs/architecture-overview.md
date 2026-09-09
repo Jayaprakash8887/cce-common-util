@@ -9,7 +9,7 @@ them restates what is here.
 |---|---|
 | **cce-protocol-service** | The definitional plane. Loads FHIR PlanDefinitions and ActivityDefinitions, builds the trigger index. |
 | **cce-matcher-service** | The event plane. Matches inbound clinical events, enrols patients, creates and completes steps. |
-| **cce-step-sla-service** | The time plane. Applies SLA transitions as deadlines pass, records the resulting deviations.
+| **cce-step-sla-service** | The time plane. Applies SLA transitions as deadlines pass, records the resulting deviations. |
 | **cce-common-util** | This library. Shared entities, repositories, FHIR parsing, and the services that operate on them. |
 
 ---
