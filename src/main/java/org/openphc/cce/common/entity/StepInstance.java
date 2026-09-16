@@ -69,8 +69,10 @@ public class StepInstance {
      * counted against. This column says what the step was <em>due</em>. Keeping them apart is what stops
      * a change to the sweep's scheduling from changing what "on time" means.
      *
-     * <p>Nullable: a step created from its own trigger has no deadline to be judged against, and stays
-     * null along with its {@code sla_status}.
+     * <p>Nullable, and read as "no deadline, so nothing to judge" wherever it is null — but no current
+     * Matcher path writes null. A step created from its own trigger is stamped with the moment it was
+     * created, and its completing event carries an earlier clinical time, so it settles {@code MET}.
+     * Null rows are the ones carried over from 1.x.
      */
     @Column(name = "due_date")
     private OffsetDateTime dueDate;

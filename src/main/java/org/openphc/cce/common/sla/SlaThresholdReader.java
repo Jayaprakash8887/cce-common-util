@@ -32,8 +32,8 @@ public class SlaThresholdReader {
     }
 
     /**
-     * A step's SLA thresholds. Either may be null — a step created from its own trigger has no
-     * tolerance window, and an event-driven step may have no missed date.
+     * A step's SLA thresholds. Either may be null: an action with no {@code tolerance-days} has no
+     * missed date, and an optional step has no schedule at all.
      *
      * @param dueDate    when the SLA goes {@code OVERDUE}, or null if it never does
      * @param missedDate when the SLA is settled as {@code MISSED}, or null if it never is

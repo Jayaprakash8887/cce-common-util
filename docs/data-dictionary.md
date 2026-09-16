@@ -406,7 +406,7 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | `repeat_index` | `INTEGER` | **NOT NULL** | `0` | Zero-based occurrence counter for repeating actions. Non-repeating actions always have index 0. |
 | `step_status` | `VARCHAR` | **NOT NULL** | — | Whether the expected event has been received. See [StepStatus](#stepstatus). |
 | `sla_status` | `VARCHAR` | Yes | — | Whether the deadline has been met. Null until it has been judged — see [SlaStatus](#slastatus). |
-| `due_date` | `TIMESTAMPTZ` | Yes | — | The deadline the work was expected to be recorded by, as the protocol definition sets it. Written once by the Matcher Service at step creation and never updated. `MET` is judged against it when the step's `MET_CONDITION_REACHED` row is applied; `OVERDUE` and `MISSED` are judged against the `process_by` of the transition row that detects them — see the note below. Null for a step created from its own trigger, which has no deadline, and whose `sla_status` therefore stays null. |
+| `due_date` | `TIMESTAMPTZ` | Yes | — | The deadline the work was expected to be recorded by, as the protocol definition sets it. Written once by the Matcher Service at step creation and never updated. `MET` is judged against it when the step's `MET_CONDITION_REACHED` row is applied; `OVERDUE` and `MISSED` are judged against the `process_by` of the transition row that detects them — see the note below. Nullable, and read as "no deadline, nothing to judge" wherever null — but no current Matcher path writes null: a step created from its own trigger is stamped with the moment it was created, and the completing event that follows carries an earlier clinical time, so it settles `MET`. Null rows are carried over from 1.x. |
 | `completed_at` | `TIMESTAMPTZ` | Yes | — | **Clinical occurrence time** of the completing event (when the act happened), not ingestion time — clamped to `now()`. Drives completion status and dependent steps' due dates. `NULL` for non-completed steps. See clinical event time extraction, in the Matcher Service repo. |
 | `completed_by_source` | `VARCHAR` | Yes | — | CloudEvent `source` that completed this step. |
 | `matched_event_id` | `UUID` | Yes | — | Foreign key → `matcher_event_log.id`. Links to the event that completed this step. |
@@ -483,6 +483,11 @@ Each step's SLA schedule: one row per verdict the Step SLA Service has to reach.
 are written by the Matcher Service in the same transaction that creates the step, so a step never exists
 without its schedule; the `MET_CONDITION_REACHED` row is written in the transaction that completes the
 step, and only when the work beat the due date.
+
+**Mandatory steps only.** Nothing is required of an optional step, so it has no deadline to breach and
+none to have beaten — it gets no rows of any kind and its `sla_status` stays null. Enforced where rows
+are written, where protocols are loaded (a `tolerance-days` on a non-`must` action is refused) and where
+rows are judged; `V4` deleted the rows that predate all three, including those `V2`'s backfill seeds.
 
 These thresholds are deliberately not denormalized onto `step_instance`. Keyed on *is this transition
 done yet*, the table is both the work queue — a partial index that shrinks as work is processed — and a
