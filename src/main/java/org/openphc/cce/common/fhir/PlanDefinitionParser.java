@@ -4,6 +4,7 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.IParser;
 import org.hl7.fhir.r4.model.*;
 import org.openphc.cce.common.enums.PlanDefinitionActionType;
+import org.openphc.cce.common.support.RequiredBehavior;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayDeque;
@@ -272,9 +273,29 @@ public class PlanDefinitionParser {
     /** The ids of every step whose requiredBehavior is "must". */
     public static Set<String> mustStepIds(List<StepMetadata> steps) {
         return steps.stream()
-                .filter(s -> "must".equals(s.requiredBehavior()))
+                .filter(s -> RequiredBehavior.isMandatory(s.requiredBehavior()))
                 .map(StepMetadata::id)
                 .collect(Collectors.toSet());
+    }
+
+    /**
+     * Describe every optional step that declares a deadline.
+     *
+     * <p>A deadline exists to be breached: it is what makes a step {@code OVERDUE} and then
+     * {@code MISSED}. Nothing is required of an optional step, so there is nothing for it to breach,
+     * and a tolerance window on one only schedules work the SLA service must then decline to judge.
+     * Reported at load so the protocol is corrected rather than quietly carrying an inert deadline.
+     */
+    public static List<String> findOptionalStepDeadlines(List<StepMetadata> steps) {
+        List<String> found = new ArrayList<>();
+        for (StepMetadata step : steps) {
+            if (step.toleranceDays() != null && !RequiredBehavior.isMandatory(step.requiredBehavior())) {
+                found.add("action '" + step.id() + "' (requiredBehavior="
+                        + (step.requiredBehavior() == null ? "<absent>" : step.requiredBehavior())
+                        + ", tolerance-days=" + step.toleranceDays() + ")");
+            }
+        }
+        return found;
     }
 
     /**
@@ -428,6 +449,32 @@ public class PlanDefinitionParser {
             if (isStepAction(nested)) {
                 validateNestedActionTypes(nested);
             }
+        }
+    }
+
+    /**
+     * Validate that no optional step declares a deadline.
+     *
+     * <p>Only a mandatory step can be late: an SLA threshold is the point at which work the protocol
+     * <em>required</em> has not been recorded. An optional step is never required, so it is never
+     * overdue and never missed, and no {@code step_sla_state_transition} row is written for one. A
+     * {@code tolerance-days} on such an action therefore says nothing the platform can act on, and
+     * accepting it would leave the author believing a deadline is being enforced.
+     *
+     * <p>{@code requiredBehavior} absent is optional, the same reading progressive instantiation
+     * takes — see {@link RequiredBehavior#isMandatory(String)}. So an action that is meant to have a deadline is fixed
+     * by declaring {@code "must"}, not by removing the tolerance.
+     *
+     * @throws IllegalArgumentException if any optional action declares {@code tolerance-days}
+     */
+    public void validateOptionalStepDeadlines(PlanDefinition planDefinition) {
+        List<String> offenders = findOptionalStepDeadlines(extractSteps(planDefinition));
+        if (!offenders.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Optional actions must not declare a deadline: tolerance-days is only meaningful "
+                            + "for requiredBehavior='must' steps, which are the only steps that can go "
+                            + "OVERDUE or MISSED. Declare requiredBehavior='must' or remove the "
+                            + "extension: " + String.join("; ", offenders));
         }
     }
 

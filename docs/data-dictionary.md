@@ -872,7 +872,12 @@ threshold being crossed but a statement about the step, settled by the Step SLA 
 | Value | Threshold | `sla_status` if the work was recorded in time | if it was not | Deviation on a breach |
 |---|---|---|---|---|
 | `DUE_DATE_REACHED` | the step's due date | *(unchanged — `MET` is settled from the step)* | `OVERDUE` | `OVERDUE` |
-| `MISSED_DATE_REACHED` | due date + `tolerance-days` | *(unchanged — no breach to record)* | `MISSED` (must only) | `MISSED` (must only) |
+| `MISSED_DATE_REACHED` | due date + `tolerance-days` | *(unchanged — no breach to record)* | `MISSED` | `MISSED` |
+
+Rows are written for **mandatory steps only** (`requiredBehavior: "must"`; an absent value is not
+mandatory). Nothing is required of an optional step, so it has no deadline to breach: Matcher schedules
+none, and a PlanDefinition that gives an optional action a `tolerance-days` is rejected at load. A row
+for an optional step predates those rules and is consumed without a status or a deviation.
 
 ### ProcessingStatus
 

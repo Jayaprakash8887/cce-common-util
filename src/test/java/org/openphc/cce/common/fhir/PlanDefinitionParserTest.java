@@ -4,6 +4,8 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.DataFormatException;
 import org.hl7.fhir.r4.model.Coding;
 import org.hl7.fhir.r4.model.DataRequirement;
+import org.hl7.fhir.r4.model.Extension;
+import org.hl7.fhir.r4.model.IntegerType;
 import org.hl7.fhir.r4.model.PlanDefinition;
 import org.hl7.fhir.r4.model.ResourceType;
 import org.hl7.fhir.r4.model.TriggerDefinition;
@@ -948,6 +950,94 @@ class PlanDefinitionParserTest {
         String json = loadFixture("/fhir/plan-definition-with-sub-steps.json");
         PlanDefinition pd = parser.parse(json);
         assertDoesNotThrow(() -> parser.validateActionIds(pd));
+    }
+
+    // ── Optional steps must not declare deadlines ──
+
+    @Test
+    void validateOptionalStepDeadlines_optionalActionWithTolerance_throws() {
+        // A deadline is the point at which required work has not been recorded. Nothing is required of
+        // an optional step, so a tolerance on one schedules a judgement that can never be made — and
+        // leaves the author believing an SLA is being enforced.
+        PlanDefinition pd = new PlanDefinition();
+        PlanDefinition.PlanDefinitionActionComponent action = stepAction(pd.addAction(), "referral");
+        action.setRequiredBehavior(PlanDefinition.ActionRequiredBehavior.COULD);
+        withToleranceDays(action, 3);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> parser.validateOptionalStepDeadlines(pd));
+        assertTrue(ex.getMessage().contains("referral"));
+        assertTrue(ex.getMessage().contains("tolerance-days"));
+        assertTrue(ex.getMessage().contains("must"),
+                "the message has to say how to fix it, not just that it is wrong");
+    }
+
+    @Test
+    void validateOptionalStepDeadlines_absentRequiredBehaviourWithTolerance_throws() {
+        // An unstated requiredBehavior states no requirement. Progressive instantiation already reads
+        // it that way, so a deadline on such an action is as inert as one on an explicit "could".
+        PlanDefinition pd = new PlanDefinition();
+        withToleranceDays(stepAction(pd.addAction(), "monthly-checkup"), 5);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> parser.validateOptionalStepDeadlines(pd));
+        assertTrue(ex.getMessage().contains("monthly-checkup"));
+        assertTrue(ex.getMessage().contains("<absent>"));
+    }
+
+    @Test
+    void validateOptionalStepDeadlines_mandatoryActionWithTolerance_isAccepted() {
+        PlanDefinition pd = new PlanDefinition();
+        PlanDefinition.PlanDefinitionActionComponent action = stepAction(pd.addAction(), "anc-visit-1");
+        action.setRequiredBehavior(PlanDefinition.ActionRequiredBehavior.MUST);
+        withToleranceDays(action, 7);
+
+        assertDoesNotThrow(() -> parser.validateOptionalStepDeadlines(pd));
+    }
+
+    @Test
+    void validateOptionalStepDeadlines_optionalActionWithoutTolerance_isAccepted() {
+        // Optional steps are perfectly legitimate — it is only the deadline on one that is not.
+        PlanDefinition pd = new PlanDefinition();
+        stepAction(pd.addAction(), "referral")
+                .setRequiredBehavior(PlanDefinition.ActionRequiredBehavior.COULD);
+
+        assertDoesNotThrow(() -> parser.validateOptionalStepDeadlines(pd));
+    }
+
+    @Test
+    void validateOptionalStepDeadlines_nestedSubStepIsChecked() throws IOException {
+        // Sub-steps are steps: extractSteps flattens them, so a deadline on a nested optional action
+        // is caught at load rather than at the first event that creates it.
+        PlanDefinition pd = new PlanDefinition();
+        PlanDefinition.PlanDefinitionActionComponent parent = stepAction(pd.addAction(), "anc-visit-1");
+        parent.setRequiredBehavior(PlanDefinition.ActionRequiredBehavior.MUST);
+        PlanDefinition.PlanDefinitionActionComponent nested =
+                stepAction(parent.addAction(), "anc-visit-1-referral");
+        nested.setRequiredBehavior(PlanDefinition.ActionRequiredBehavior.COULD);
+        withToleranceDays(nested, 7);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> parser.validateOptionalStepDeadlines(pd));
+        assertTrue(ex.getMessage().contains("anc-visit-1-referral"));
+    }
+
+    @Test
+    void validateOptionalStepDeadlines_referenceFixtures_areAccepted() throws IOException {
+        for (String fixture : List.of("/fhir/plan-definition-anc-high-risk.json",
+                "/fhir/plan-definition-with-sub-steps.json",
+                "/fhir/plan-definition-rmnch-protocol.json",
+                "/fhir/emr-service-protocol-nested.json")) {
+            PlanDefinition pd = parser.parse(loadFixture(fixture));
+            assertDoesNotThrow(() -> parser.validateOptionalStepDeadlines(pd), fixture);
+        }
+    }
+
+    private PlanDefinition.PlanDefinitionActionComponent withToleranceDays(
+            PlanDefinition.PlanDefinitionActionComponent action, int days) {
+        action.addExtension(new Extension(
+                "http://openphc.org/fhir/StructureDefinition/tolerance-days", new IntegerType(days)));
+        return action;
     }
 
     private String loadFixture(String resourcePath) throws IOException {
