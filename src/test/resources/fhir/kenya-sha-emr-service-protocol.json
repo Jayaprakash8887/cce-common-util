@@ -1,0 +1,527 @@
+{
+  "id": "kenya-sha-emr-service-protocol",
+  "url": "http://openphc.org/PlanDefinition/kenya-sha-emr-service-protocol",
+  "date": "2026-09-15",
+  "name": "KenyaShaEmrServiceProtocol",
+  "title": "Kenya SHA NSHR Outpatient Visit Protocol",
+  "action": [
+    {
+      "id": "consent-request",
+      "title": "Consent Requested",
+      "type": {
+        "coding": [
+          {
+            "system": "http://openphc.org/fhir/CodeSystem/action-type",
+            "code": "step"
+          }
+        ]
+      },
+      "trigger": [
+        {
+          "data": [
+            {
+              "type": "Consent",
+              "codeFilter": [
+                {
+                  "code": [
+                    {
+                      "code": "proposed"
+                    }
+                  ],
+                  "path": "status"
+                }
+              ]
+            }
+          ],
+          "name": "consent-request-trigger",
+          "type": "named-event"
+        }
+      ],
+      "description": "Patient-privacy consent proposed but not yet verified. Matches Consent with status proposed (verification[].verified=false, no verificationDate). NSHR/SHR-mediator sample posts this via a Bundle (type=transaction) with a PUT Patient entry alongside the Consent entry - the matcher must unwrap that transaction Bundle to find the Consent resource, not expect a bare Consent payload.",
+      "timingTiming": {
+        "repeat": {
+          "count": 1,
+          "period": 1,
+          "frequency": 1,
+          "periodUnit": "d"
+        }
+      },
+      "requiredBehavior": "must",
+      "action": [
+        {
+          "id": "consent-verification",
+          "title": "Consent Verified",
+          "type": {
+            "coding": [
+              {
+                "system": "http://openphc.org/fhir/CodeSystem/action-type",
+                "code": "step"
+              }
+            ]
+          },
+          "trigger": [
+            {
+              "data": [
+                {
+                  "type": "Consent",
+                  "codeFilter": [
+                    {
+                      "code": [
+                        {
+                          "code": "active"
+                        }
+                      ],
+                      "path": "status"
+                    }
+                  ]
+                }
+              ],
+              "name": "consent-verification-trigger",
+              "type": "named-event"
+            }
+          ],
+          "extension": [
+            {
+              "url": "http://openphc.org/fhir/StructureDefinition/tolerance-days",
+              "valueInteger": 1
+            }
+          ],
+          "description": "Consent verified (e.g. via OTP, Afyayangu, or biometrics) - same Consent id transitions status proposed to active, verification[].verified becomes true and verificationDate is set. Sample shows this ~25 minutes after consent-request. Gates access to the patient's SHR record; downstream clinical steps should not be expected before this fires.",
+          "timingTiming": {
+            "repeat": {
+              "count": 1,
+              "period": 1,
+              "frequency": 1,
+              "periodUnit": "d"
+            }
+          },
+          "relatedAction": [
+            {
+              "actionId": "consent-request",
+              "relationship": "after-end",
+              "offsetDuration": {
+                "code": "d",
+                "unit": "d",
+                "value": 0,
+                "system": "http://unitsofmeasure.org"
+              }
+            }
+          ],
+          "requiredBehavior": "must",
+          "action": [
+            {
+              "id": "visit-encounter",
+              "title": "Patient Visit",
+              "type": {
+                "coding": [
+                  {
+                    "system": "http://openphc.org/fhir/CodeSystem/action-type",
+                    "code": "step"
+                  }
+                ]
+              },
+              "trigger": [
+                {
+                  "data": [
+                    {
+                      "type": "Encounter",
+                      "codeFilter": [
+                        {
+                          "code": [
+                            {
+                              "code": "AMB",
+                              "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+                              "display": "ambulatory"
+                            }
+                          ],
+                          "path": "class"
+                        }
+                      ]
+                    }
+                  ],
+                  "name": "visit-encounter-trigger",
+                  "type": "named-event"
+                }
+              ],
+              "description": "Outpatient check-in. Matches Encounter with class AMB (ambulatory). NSHR payloads link this to EpisodeOfCare via Encounter.episodeOfCare rather than a type-coded visit trigger.",
+              "timingTiming": {
+                "repeat": {
+                  "count": 1,
+                  "period": 1,
+                  "frequency": 1,
+                  "periodUnit": "d"
+                }
+              },
+              "relatedAction": [
+                {
+                  "actionId": "consent-verification",
+                  "relationship": "after-end",
+                  "offsetDuration": {
+                    "code": "d",
+                    "unit": "d",
+                    "value": 0,
+                    "system": "http://unitsofmeasure.org"
+                  }
+                }
+              ],
+              "requiredBehavior": "must",
+              "action": [
+                {
+                  "id": "vitals-recording",
+                  "title": "Vitals Recording",
+                  "type": {
+                    "coding": [
+                      {
+                        "system": "http://openphc.org/fhir/CodeSystem/action-type",
+                        "code": "step"
+                      }
+                    ]
+                  },
+                  "trigger": [
+                    {
+                      "data": [
+                        {
+                          "type": "Observation",
+                          "codeFilter": [
+                            {
+                              "code": [
+                                {
+                                  "code": "vital-signs",
+                                  "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                                  "display": "Vital Signs"
+                                }
+                              ],
+                              "path": "category"
+                            }
+                          ]
+                        }
+                      ],
+                      "name": "vitals-trigger",
+                      "type": "named-event"
+                    }
+                  ],
+                  "extension": [
+                    {
+                      "url": "http://openphc.org/fhir/StructureDefinition/tolerance-days",
+                      "valueInteger": 1
+                    }
+                  ],
+                  "description": "Vitals bundle (temp, HR, RR, height, weight, BMI, SpO2, systolic/diastolic BP), one Observation per vital sharing a common effectiveDateTime. NSHR payloads emit these under a distinct sub-Encounter from the visit Encounter, and may arrive a day or more after visit-encounter for this data source - hence the wider tolerance.",
+                  "timingTiming": {
+                    "repeat": {
+                      "count": 1,
+                      "period": 1,
+                      "frequency": 1,
+                      "periodUnit": "d"
+                    }
+                  },
+                  "relatedAction": [
+                    {
+                      "actionId": "visit-encounter",
+                      "relationship": "after-start",
+                      "offsetDuration": {
+                        "code": "d",
+                        "unit": "d",
+                        "value": 0,
+                        "system": "http://unitsofmeasure.org"
+                      }
+                    }
+                  ],
+                  "requiredBehavior": "must"
+                },
+                {
+                  "id": "diagnosis",
+                  "title": "Clinical Diagnosis",
+                  "type": {
+                    "coding": [
+                      {
+                        "system": "http://openphc.org/fhir/CodeSystem/action-type",
+                        "code": "step"
+                      }
+                    ]
+                  },
+                  "trigger": [
+                    {
+                      "data": [
+                        {
+                          "type": "Condition"
+                        }
+                      ],
+                      "name": "diagnosis-trigger",
+                      "type": "named-event"
+                    }
+                  ],
+                  "extension": [
+                    {
+                      "url": "http://openphc.org/fhir/StructureDefinition/tolerance-days",
+                      "valueInteger": 1
+                    }
+                  ],
+                  "description": "Diagnosis recorded. Matches any Condition (resource-type only). NSHR Condition.clinicalStatus/verificationStatus values (e.g. inactive/provisional) don't reliably indicate an active new diagnosis for this source, so codeFilter is intentionally omitted rather than mismatched.",
+                  "timingTiming": {
+                    "repeat": {
+                      "count": 1,
+                      "period": 1,
+                      "frequency": 1,
+                      "periodUnit": "d"
+                    }
+                  },
+                  "relatedAction": [
+                    {
+                      "actionId": "vitals-recording",
+                      "relationship": "after-end",
+                      "offsetDuration": {
+                        "code": "d",
+                        "unit": "d",
+                        "value": 0,
+                        "system": "http://unitsofmeasure.org"
+                      }
+                    }
+                  ],
+                  "requiredBehavior": "must"
+                },
+                {
+                  "id": "medication-request",
+                  "title": "Medication Order",
+                  "type": {
+                    "coding": [
+                      {
+                        "system": "http://openphc.org/fhir/CodeSystem/action-type",
+                        "code": "step"
+                      }
+                    ]
+                  },
+                  "trigger": [
+                    {
+                      "data": [
+                        {
+                          "type": "MedicationRequest"
+                        }
+                      ],
+                      "name": "medication-request-trigger",
+                      "type": "named-event"
+                    }
+                  ],
+                  "extension": [
+                    {
+                      "url": "http://openphc.org/fhir/StructureDefinition/tolerance-days",
+                      "valueInteger": 1
+                    }
+                  ],
+                  "description": "Medication prescribed. Matches any MedicationRequest (resource-type only, per medicationReference not being in standard extraction paths). Note: observed sample data has MedicationDispense.whenHandedOver preceding this request's dispenseRequest.validityPeriod.start by ~1.5 minutes - a likely source data-quality issue, not a protocol design choice.",
+                  "timingTiming": {
+                    "repeat": {
+                      "count": 1,
+                      "period": 1,
+                      "frequency": 1,
+                      "periodUnit": "d"
+                    }
+                  },
+                  "relatedAction": [
+                    {
+                      "actionId": "diagnosis",
+                      "relationship": "after-end",
+                      "offsetDuration": {
+                        "code": "d",
+                        "unit": "d",
+                        "value": 0,
+                        "system": "http://unitsofmeasure.org"
+                      }
+                    }
+                  ],
+                  "requiredBehavior": "must",
+                  "action": [
+                    {
+                      "id": "medication-dispense",
+                      "title": "Medication Dispense",
+                      "type": {
+                        "coding": [
+                          {
+                            "system": "http://openphc.org/fhir/CodeSystem/action-type",
+                            "code": "step"
+                          }
+                        ]
+                      },
+                      "trigger": [
+                        {
+                          "data": [
+                            {
+                              "type": "MedicationDispense",
+                              "codeFilter": [
+                                {
+                                  "code": [
+                                    {
+                                      "code": "completed"
+                                    }
+                                  ],
+                                  "path": "status"
+                                }
+                              ]
+                            }
+                          ],
+                          "name": "medication-dispense-trigger",
+                          "type": "named-event"
+                        }
+                      ],
+                      "extension": [
+                        {
+                          "url": "http://openphc.org/fhir/StructureDefinition/tolerance-days",
+                          "valueInteger": 1
+                        }
+                      ],
+                      "description": "Medication dispensed to patient. Matches completed MedicationDispense. Links back via authorizingPrescription to medication-request.",
+                      "timingTiming": {
+                        "repeat": {
+                          "count": 1,
+                          "period": 1,
+                          "frequency": 1,
+                          "periodUnit": "d"
+                        }
+                      },
+                      "relatedAction": [
+                        {
+                          "actionId": "medication-request",
+                          "relationship": "after-end",
+                          "offsetDuration": {
+                            "code": "d",
+                            "unit": "d",
+                            "value": 0,
+                            "system": "http://unitsofmeasure.org"
+                          }
+                        }
+                      ],
+                      "requiredBehavior": "must",
+                      "action": [
+                        {
+                          "id": "medication-administration",
+                          "title": "Medication Administration",
+                          "type": {
+                            "coding": [
+                              {
+                                "system": "http://openphc.org/fhir/CodeSystem/action-type",
+                                "code": "step"
+                              }
+                            ]
+                          },
+                          "trigger": [
+                            {
+                              "data": [
+                                {
+                                  "type": "MedicationAdministration",
+                                  "codeFilter": [
+                                    {
+                                      "code": [
+                                        {
+                                          "code": "completed"
+                                        }
+                                      ],
+                                      "path": "status"
+                                    }
+                                  ]
+                                }
+                              ],
+                              "name": "medication-administration-trigger",
+                              "type": "named-event"
+                            }
+                          ],
+                          "extension": [
+                            {
+                              "url": "http://openphc.org/fhir/StructureDefinition/tolerance-days",
+                              "valueInteger": 1
+                            }
+                          ],
+                          "description": "Medication administered to patient. Matches completed MedicationAdministration. Sample NSHR payload has no effectiveDateTime/effectivePeriod, so its actual completion time cannot be verified from the payload alone - only inferred as after dispense.",
+                          "timingTiming": {
+                            "repeat": {
+                              "count": 1,
+                              "period": 1,
+                              "frequency": 1,
+                              "periodUnit": "d"
+                            }
+                          },
+                          "relatedAction": [
+                            {
+                              "actionId": "medication-dispense",
+                              "relationship": "after-end",
+                              "offsetDuration": {
+                                "code": "d",
+                                "unit": "d",
+                                "value": 0,
+                                "system": "http://unitsofmeasure.org"
+                              }
+                            }
+                          ],
+                          "requiredBehavior": "must"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "procedure",
+                  "title": "Therapeutic Procedure",
+                  "type": {
+                    "coding": [
+                      {
+                        "system": "http://openphc.org/fhir/CodeSystem/action-type",
+                        "code": "step"
+                      }
+                    ]
+                  },
+                  "trigger": [
+                    {
+                      "data": [
+                        {
+                          "type": "Procedure",
+                          "codeFilter": [
+                            {
+                              "code": [
+                                {
+                                  "code": "THERAPEUTIC-PROCEDURE",
+                                  "system": "https://nshr-uat.sha.go.ke/fhir/CodeSystem/procedure-code-cs"
+                                }
+                              ],
+                              "path": "code"
+                            }
+                          ]
+                        }
+                      ],
+                      "name": "procedure-trigger",
+                      "type": "named-event"
+                    }
+                  ],
+                  "description": "Therapeutic procedure performed (e.g. wound cleaning). Not every visit includes a procedure, so this is optional. Sample payload lists the same performer twice in Procedure.performer - likely a source duplication, not two distinct performers.",
+                  "timingTiming": {
+                    "repeat": {
+                      "count": 1,
+                      "period": 1,
+                      "frequency": 1,
+                      "periodUnit": "d"
+                    }
+                  },
+                  "relatedAction": [
+                    {
+                      "actionId": "diagnosis",
+                      "relationship": "after-end",
+                      "offsetDuration": {
+                        "code": "d",
+                        "unit": "d",
+                        "value": 0,
+                        "system": "http://unitsofmeasure.org"
+                      }
+                    }
+                  ],
+                  "requiredBehavior": "could"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "status": "active",
+  "version": "1.0.0",
+  "description": "Tracks a Kenya SHA/NSHR outpatient visit workflow: patient-privacy consent request/verification (Consent status proposed then active), ambulatory check-in (Encounter class=AMB), vitals recording, diagnosis, medication order/dispense/administration, and an optional therapeutic procedure. Sample payload shows each step's Observation/Condition/Medication*/Procedure resources referencing distinct Encounter ids rather than one shared visit Encounter - the Matcher Service should correlate by patient/episode, not by a single Encounter id, for this data source.",
+  "resourceType": "PlanDefinition"
+}
