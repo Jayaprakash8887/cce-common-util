@@ -226,7 +226,7 @@ erDiagram
 | 1 | `protocol_definition` | FHIR R4 PlanDefinition resources (protocol templates) | Low (tens) |
 | 2 | `protocol_instance` | Patient enrolments in specific protocols | Medium (per-patient) |
 | 3 | `step_instance` | Individual action steps within a patient's protocol journey | Medium–High |
-| 4 | `step_sla_state_transition` | Each step's SLA schedule — one row per threshold | Medium–High |
+| 4 | `step_sla_state_transition` | Each step's SLA schedule — one row per verdict to be reached | Medium–High |
 | 5 | `deviation` | Recorded protocol deviations | Medium |
 | 6 | `trigger_index` | Inverted index for fast Tier 1 structural event matching | Low (per protocol load) |
 | 7 | `action_definition` | FHIR ActivityDefinition resources for intelligence actions | Low (tens) |
@@ -479,8 +479,10 @@ reason for the split.
 
 ## 7. step_sla_state_transition
 
-Each step's SLA schedule, one row per threshold it can cross. Written by the Matcher Service in the same
-transaction that creates the step, so a step never exists without its schedule.
+Each step's SLA schedule: one row per verdict the Step SLA Service has to reach. The two deadline rows
+are written by the Matcher Service in the same transaction that creates the step, so a step never exists
+without its schedule; the `MET_CONDITION_REACHED` row is written in the transaction that completes the
+step, and only when the work beat the due date.
 
 These thresholds are deliberately not denormalized onto `step_instance`. Keyed on *is this transition
 done yet*, the table is both the work queue — a partial index that shrinks as work is processed — and a

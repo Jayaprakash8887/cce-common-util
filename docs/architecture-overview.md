@@ -161,8 +161,9 @@ What each threshold means for a step is the SLA transition contract, in §5.
 
 The Matcher Service knows a step's deadlines the moment it creates the step; the Step SLA Service
 must act on them later, without polling every step in the database. The `step_sla_state_transition`
-table is that handoff — one row per threshold, inserted at step creation, carrying the time it
-becomes actionable.
+table is that handoff — one row per verdict to be reached, carrying the time it becomes actionable.
+Two are written at step creation, one per deadline. The third, `MET_CONDITION_REACHED`, is written at
+the completion that earns it, because nothing is known about timeliness before then.
 
 **Matcher inserts. Step SLA fetches.** A row is fetched under `FOR UPDATE SKIP LOCKED`, which is
 what lets every Step SLA replica poll the same table concurrently: a row locked by one replica is

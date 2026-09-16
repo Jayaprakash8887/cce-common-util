@@ -206,7 +206,9 @@ recorded.
 
 ### `sla` — `SlaThresholdReader`
 
-Reads a step's `dueDate` / `missedDate` back from its `step_sla_state_transition` rows.
+Reads a step's `dueDate` / `missedDate` back from its `step_sla_state_transition` rows. A
+`MET_CONDITION_REACHED` row is ignored: its `process_by` is the completion that satisfied it, not a
+threshold the step was due by.
 
 ```java
 record SlaThresholds(OffsetDateTime dueDate, OffsetDateTime missedDate) { }

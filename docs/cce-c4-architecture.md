@@ -772,7 +772,7 @@ erDiagram
 | 3 | `trigger_index` | Inverted index for fast structural event matching | Low (per protocol load) | No |
 | 4 | `protocol_instance` | A patient's enrolment in a protocol | Medium (per patient) | **UPID** |
 | 5 | `step_instance` | An individual action occurrence in a patient's journey | Medium–High | Indirect (via FK) |
-| 6 | `step_sla_state_transition` | Each step's SLA schedule — one row per threshold | Medium–High | Indirect |
+| 6 | `step_sla_state_transition` | Each step's SLA schedule — one row per verdict to be reached | Medium–High | Indirect |
 | 7 | `deviation` | Recorded protocol deviations | Medium | Indirect |
 | 8 | `intelligence_event_log` | Every intelligence action evaluated, with its context and published payload | Medium–High | **UPID + FHIR payload** |
 | 9 | `protocol_instance_history` | Append-only log of every enrolment status transition | High | Indirect |

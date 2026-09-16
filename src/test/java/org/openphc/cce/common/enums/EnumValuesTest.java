@@ -92,6 +92,23 @@ class EnumValuesTest {
     }
 
     @Test
+    void eachThresholdNamesTheDeviationItsBreachRecords() {
+        // The applier reads this off the row rather than branching on the type, so the mapping lives
+        // here and is asserted here.
+        assertEquals(DeviationType.OVERDUE, SlaTransitionType.DUE_DATE_REACHED.breachDeviation());
+        assertEquals(DeviationType.MISSED, SlaTransitionType.MISSED_DATE_REACHED.breachDeviation());
+    }
+
+    @Test
+    void metConditionReachedIsNoBreach() {
+        // It is a condition already satisfied, not a threshold that can be crossed: nothing is
+        // breached by work arriving early, and there is nothing deviant about it.
+        assertNull(SlaTransitionType.MET_CONDITION_REACHED.breachStatus());
+        assertNull(SlaTransitionType.MET_CONDITION_REACHED.breachDeviation());
+        assertEquals(3, SlaTransitionType.values().length);
+    }
+
+    @Test
     void slaStatusHasNoPendingConstant() {
         // Null models "not yet judged". An enum constant for it read as a judgement that had been
         // made, and left the no-SLA-at-all case with nowhere honest to sit.
