@@ -56,6 +56,9 @@ public class SlaThresholdReader {
             switch (row.getTransitionType()) {
                 case DUE_DATE_REACHED -> dueDate = row.getProcessBy();
                 case MISSED_DATE_REACHED -> missedDate = row.getProcessBy();
+                // MET_CONDITION_REACHED carries a completion, not a threshold, so it is no part of
+                // what a step was due by.
+                case MET_CONDITION_REACHED -> { }
             }
         }
         return new SlaThresholds(dueDate, missedDate);

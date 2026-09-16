@@ -147,9 +147,11 @@ the column. A step's SLA has exactly one author and one source of evidence. See
 [Data Dictionary §3](data-dictionary.md#3-ownership).
 
 Single ownership does not mean a completion waits for its deadline to be judged. `completed_at` fixes
-the answer the moment it is recorded, so a step that beat its `due_date` is recorded `MET` on Step SLA's
-next sweep rather than at the threshold — seconds later, not weeks. A breach does still wait for its
-schedule to come round, because the threshold is what it is measured against. §5 is how.
+the answer the moment it is recorded, so Matcher schedules the verdict there and then — a
+`MET_CONDITION_REACHED` row whose `process_by` is that `completed_at`, already due — and Step SLA
+records `MET` on its next cycle rather than at the threshold: seconds later, not weeks. A breach does
+still wait for its schedule to come round, because the threshold is what it is measured against. §5 is
+how.
 
 What each threshold means for a step is the SLA transition contract, in §5.
 
@@ -176,12 +178,9 @@ permanent.
 **A row is fetched for one reason.** Its `next_attempt_at` has passed — the deadline fell and the work
 has to be judged against it. Nothing pulls a step's remaining rows forward because the step completed or
 was judged: a step already settled keeps its unspent schedule until those dates arrive, and each row is
-consumed then, recording nothing. What an on-time completion does *not* have to wait for is a schedule —
-Step SLA sweeps `step_instance` directly for it, which is what keeps `MET` from sitting at null until a
-due date weeks away. That sweep is cheap rather than a scan of every step, because
-`idx_step_instance_completed_unjudged` covers the completed-but-unsettled set — a small fraction of the
-table, though not one that fully drains (see the index note in the
-[Data Dictionary §6](data-dictionary.md#6-step_instance)).
+consumed then, recording nothing. An on-time completion does not wait either, and needs no scan of
+`step_instance` to avoid it: its row is written *at* the completion with a `process_by` already in the
+past, so the one gate lets it through on the next cycle.
 
 What the applier does depends on the step it finds, not on when it runs. It compares
 `step_instance.completed_at` against the row's `process_by` and never consults the wall clock — and
@@ -194,14 +193,17 @@ time:
 | `DUE_DATE_REACHED` | not completed | `OVERDUE` | `OVERDUE` |
 | `DUE_DATE_REACHED` | `completed_at >= process_by` | `OVERDUE` | `OVERDUE` |
 | `DUE_DATE_REACHED` | `completed_at < process_by` | *unchanged* | — |
-| `MISSED_DATE_REACHED` | not completed | `MISSED` (`must` only) | `MISSED` (`must` only) |
-| `MISSED_DATE_REACHED` | `completed_at >= process_by` | `MISSED` (`must` only) | `MISSED` (`must` only) |
+| `MISSED_DATE_REACHED` | not completed | `MISSED` | `MISSED` |
+| `MISSED_DATE_REACHED` | `completed_at >= process_by` | `MISSED` | `MISSED` |
 | `MISSED_DATE_REACHED` | `completed_at < process_by` | *unchanged* | — |
+| `MET_CONDITION_REACHED` | `completed_at < due_date` | `MET` | — |
+| `MET_CONDITION_REACHED` | anything else | *unchanged* | — |
 
-A transition row only ever records a breach. `MET` is not in the table because no row writes it: the
-Step SLA Service sweeps `step_instance` for completed steps whose `completed_at` beat their `due_date`
-and records it from there, needing no schedule to ask a question about the step. A row whose threshold
-was kept is consumed.
+A *deadline* row only ever records a breach, so one whose threshold was kept is consumed. `MET` has a
+row of its own, written by Matcher when the completing event lands early rather than scheduled with the
+step — nothing is known about timeliness at creation. Note which column each verdict is measured
+against: a breach against the row's `process_by`, `MET` against the step's `due_date`. The `MET` row's
+`process_by` is the `completed_at` that prompted it, which is what makes it due immediately.
 
 Which is also why a step completed *between* its two thresholds is not `MET`. It breached neither, and
 breaching neither is not the same claim as having been on time.

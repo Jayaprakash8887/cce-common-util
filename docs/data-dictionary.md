@@ -406,7 +406,7 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | `repeat_index` | `INTEGER` | **NOT NULL** | `0` | Zero-based occurrence counter for repeating actions. Non-repeating actions always have index 0. |
 | `step_status` | `VARCHAR` | **NOT NULL** | — | Whether the expected event has been received. See [StepStatus](#stepstatus). |
 | `sla_status` | `VARCHAR` | Yes | — | Whether the deadline has been met. Null until it has been judged — see [SlaStatus](#slastatus). |
-| `due_date` | `TIMESTAMPTZ` | Yes | — | The deadline the work was expected to be recorded by, as the protocol definition sets it. Written once by the Matcher Service at step creation and never updated. `MET` is settled from it by a sweep of this table; `OVERDUE` and `MISSED` are judged against the `process_by` of the transition row that detects them — see the note below. Null for a step created from its own trigger, which has no deadline, and whose `sla_status` therefore stays null. |
+| `due_date` | `TIMESTAMPTZ` | Yes | — | The deadline the work was expected to be recorded by, as the protocol definition sets it. Written once by the Matcher Service at step creation and never updated. `MET` is judged against it when the step's `MET_CONDITION_REACHED` row is applied; `OVERDUE` and `MISSED` are judged against the `process_by` of the transition row that detects them — see the note below. Null for a step created from its own trigger, which has no deadline, and whose `sla_status` therefore stays null. |
 | `completed_at` | `TIMESTAMPTZ` | Yes | — | **Clinical occurrence time** of the completing event (when the act happened), not ingestion time — clamped to `now()`. Drives completion status and dependent steps' due dates. `NULL` for non-completed steps. See clinical event time extraction, in the Matcher Service repo. |
 | `completed_by_source` | `VARCHAR` | Yes | — | CloudEvent `source` that completed this step. |
 | `matched_event_id` | `UUID` | Yes | — | Foreign key → `matcher_event_log.id`. Links to the event that completed this step. |
@@ -415,11 +415,10 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | `updated_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Last modification timestamp. |
 
 > **The due date is here; the schedule that acts on it is not.** `due_date` is a fact about the step —
-> what the work was due by — and `MET` is settled from it directly: the Step SLA Service sweeps
-> `step_instance` for completed steps whose `completed_at` beat it, with no transition row involved.
-> Whether work was *on time* is a question about the step, so it is asked of the step. A *breach* is
-> what a schedule exists to detect, so `OVERDUE` and `MISSED` are measured against the `process_by` of
-> the row that detects them. The schedule for acting on each threshold is a row in
+> what the work was due by — and it is what `MET` is measured against: a `MET_CONDITION_REACHED` row
+> asks the question, and the Step SLA Service answers it from this column, not from the row's own
+> `process_by`. A *breach* is what a deadline exists to detect, so `OVERDUE` and `MISSED` are measured
+> against the `process_by` of the row that detects them. The schedule for acting on each threshold is a row in
 > [`step_sla_state_transition`](#7-step_sla_state_transition) carrying its `process_by` time, which
 > keeps the evaluator's working set in a table that shrinks as work is processed instead of requiring a
 > rescan of every step row behind a watermark cursor.
@@ -445,7 +444,7 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | Check | — | `required_behavior IN ('must', 'could', 'must-unless-documented')` |
 | B-tree Index | `idx_step_instance_protocol` | `protocol_instance_id` — All steps within a protocol instance. |
 | Partial B-tree | `idx_step_instance_not_started` | `(protocol_instance_id, action_id) WHERE step_status = 'NOT_STARTED'` — locating the step a late-arriving event should complete. |
-| Partial B-tree | `idx_step_instance_completed_unjudged` | `(id) WHERE step_status = 'COMPLETED' AND completed_at IS NOT NULL AND (sla_status IS NULL OR sla_status = 'OVERDUE')` — completed steps whose SLA is still unsettled. Only the null half is read now, swept to record `MET` for work that beat its `due_date`; the `OVERDUE` half lost its consumer when the early fetch of an already-late step's remaining rows was dropped, and those rows are taken when their own deadline arrives. Neither half fully drains: `OVERDUE` is terminal for a step completed before its missed date, and a completed step with no `due_date` is never `MET`, so both linger in the predicate indefinitely. Narrowing it to the sweep's own predicate — `sla_status IS NULL AND due_date IS NOT NULL AND completed_at < due_date` — would make the index genuinely transient, and is worth doing when the index is next revised. |
+| *(dropped in V3)* | `idx_step_instance_completed_unjudged` | Covered the on-time sweep that settled `MET` by scanning this table. `MET` is now a scheduled row like every other verdict, so the sweep and its index are gone — see [`step_sla_state_transition`](#7-step_sla_state_transition). |
 
 ### Status Machines
 
@@ -533,9 +532,9 @@ the shared database directly — Matcher is not in that path.
 - **A row is taken at its deadline, and nothing pulls it forward.** The judgement reads only
   `completed_at` and `process_by`, so applying a row ahead of its threshold would reach the same verdict
   it reaches on time — nothing to gain, and a fetch that found rows by their step's state would collide
-  with the back-off, whose whole mechanism is holding `next_attempt_at` in the future. What does not wait
-  for a schedule is `MET`: Step SLA sweeps `step_instance` for it directly, which is why an on-time
-  completion does not read as a null `sla_status` until its due date arrives.
+  with the back-off, whose whole mechanism is holding `next_attempt_at` in the future. `MET` does not
+  wait either: its row is written at the completion with a `process_by` already past, so it is taken on
+  the next cycle rather than at a due date that may be weeks away.
 - **An absent threshold gets no row.** A step created from its own trigger with no `tolerance-days` has
   no `MISSED_DATE_REACHED` row, which is precisely what "this step can never be written off" means.
 - **`process_by` is never rewritten**, so a settled SLA can still be judged against its original
@@ -836,10 +835,10 @@ reflects when the act happened, not when the event was ingested.
 
 | Value | Condition | Transitions From | Transitions To |
 |-------|-----------|-----------------|----------------|
-| *(null)* | Nothing to judge on yet: no threshold has fallen due, and the step has not completed either. Transient for a completed step: one that beat its `due_date` is settled `MET` by the next Step SLA sweep, one that did not is settled when its due-date row comes round. Also the permanent state of a step with no due date, where no SLA applies. **Not an enum value**: the column is nullable, and null is the initial state. | *(initial)* | `OVERDUE`, `MET` |
+| *(null)* | Nothing to judge on yet: no threshold has fallen due, and the step has not completed either. Transient for a completed mandatory step: one that beat its `due_date` is settled `MET` within a cycle of the completion, one that did not is settled when its due-date row comes round. Also the permanent state of a step with no due date and of an optional step, where no SLA applies. **Not an enum value**: the column is nullable, and null is the initial state. | *(initial)* | `OVERDUE`, `MET` |
 | `OVERDUE` | The due threshold fell and the work was not recorded by then. An `OVERDUE` deviation is recorded. | *(null)* | `MISSED` |
 | `MISSED` | Past the missed threshold and the event never arrived. A `MISSED` deviation is recorded. | `OVERDUE` | *(terminal)* |
-| `MET` | The work was recorded before the step's `due_date`. Written only from null, and by no transition row: Step SLA sweeps `step_instance` for completed steps whose `completed_at` beat their `due_date`, so an on-time completion is recorded without waiting for a deadline — and a step already found `OVERDUE` is never relabelled as on time. | *(null)* | *(terminal)* |
+| `MET` | The work was recorded before the step's `due_date`. Written only from null, and only when the step's `MET_CONDITION_REACHED` row is applied — Matcher writes that row at the completion itself, so an on-time completion is recorded without waiting for a deadline, and a step already found `OVERDUE` is never relabelled as on time. | *(null)* | *(terminal)* |
 
 #### Reading the pair
 
@@ -864,15 +863,15 @@ Every combination is meaningful, and `completed_at` / `due_date` are available f
 
 ### SlaTransitionType
 
-The transition types Matcher writes to `step_sla_state_transition.transition_type`. One value per
-threshold the SLA lifecycle crosses; there is deliberately none for reaching `MET`, which is not a
-threshold being crossed but a statement about the step, settled by the Step SLA Service from
-`step_instance.due_date` with no row involved.
+The transition types Matcher writes to `step_sla_state_transition.transition_type`. Two are deadlines
+the step may cross; the third is a condition it has already satisfied, written when the completing event
+lands before the due date. Every SLA verdict comes from one of these rows.
 
 | Value | Threshold | `sla_status` if the work was recorded in time | if it was not | Deviation on a breach |
 |---|---|---|---|---|
-| `DUE_DATE_REACHED` | the step's due date | *(unchanged — `MET` is settled from the step)* | `OVERDUE` | `OVERDUE` |
+| `DUE_DATE_REACHED` | the step's due date | *(unchanged — the step's `MET_CONDITION_REACHED` row carries that verdict)* | `OVERDUE` | `OVERDUE` |
 | `MISSED_DATE_REACHED` | due date + `tolerance-days` | *(unchanged — no breach to record)* | `MISSED` | `MISSED` |
+| `MET_CONDITION_REACHED` | the completion itself, when it beat the due date | `MET` | *(n/a — the row exists only because the work was on time)* | *(none — nothing deviant about on-time work)* |
 
 Rows are written for **mandatory steps only** (`requiredBehavior: "must"`; an absent value is not
 mandatory). Nothing is required of an optional step, so it has no deadline to breach: Matcher schedules
