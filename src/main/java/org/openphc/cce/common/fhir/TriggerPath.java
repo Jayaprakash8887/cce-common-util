@@ -27,8 +27,8 @@ public enum TriggerPath {
     /** {@code Observation.code}, {@code Procedure.code}, … */
     CODE("code", Shape.CODEABLE_CONCEPT),
 
-    /** {@code Encounter.class} — the encounter classification. */
-    CLASS("class", Shape.CODEABLE_CONCEPT),
+    /** {@code Encounter.class} — the encounter classification. A bare Coding, not a CodeableConcept. */
+    CLASS("class", Shape.CODING),
 
     /** {@code Encounter.serviceType} — the service the encounter delivered. */
     SERVICE_TYPE("serviceType", Shape.CODEABLE_CONCEPT),
@@ -58,6 +58,8 @@ public enum TriggerPath {
     public enum Shape {
         /** A single CodeableConcept: read {@code coding[*]}. */
         CODEABLE_CONCEPT,
+        /** A single bare Coding: read {@code system}/{@code code} directly, with no {@code coding} wrapper. */
+        CODING,
         /** An array of CodeableConcepts, falling back to a single one where the field is 0..1. */
         CODEABLE_CONCEPT_ARRAY,
         /** An array of Identifiers: read {@code system} and {@code value}. */
