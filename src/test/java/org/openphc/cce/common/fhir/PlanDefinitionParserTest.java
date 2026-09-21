@@ -255,21 +255,32 @@ class PlanDefinitionParserTest {
     }
 
     @Test
-    void validateTriggers_codeFilterPathNoEventIsReadFor_throws() {
-        // The failure this check exists for: an unmatchable path is indexed like any other and then
-        // never matched, and since every codeFilter of an action must match, it takes the whole action
-        // down with it. A protocol that loads cleanly and silently never enrols anyone is worse than one
-        // that is refused, so it is refused.
+    void validateTriggers_codeFilterPathThatIsNotATopLevelField_throws() {
+        // The failure this check exists for: a path the extractor cannot follow is indexed like any other
+        // and then never matched, and since every codeFilter of an action must match, it takes the whole
+        // action down with it. A protocol that loads cleanly and silently never enrols anyone is worse
+        // than one that is refused, so it is refused.
         PlanDefinition pd = new PlanDefinition();
         PlanDefinition.PlanDefinitionActionComponent action = stepAction(pd.addAction(), "enrol-on-bodysite");
-        codeFilterTrigger(action, "Observation", "bodySite", "http://snomed.info/sct", "1234");
+        codeFilterTrigger(action, "Observation", "Observation.bodySite", "http://snomed.info/sct", "1234");
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> parser.validateTriggers(pd));
         assertTrue(ex.getMessage().contains("enrol-on-bodysite"));
-        assertTrue(ex.getMessage().contains("bodySite"));
+        assertTrue(ex.getMessage().contains("Observation.bodySite"));
         assertTrue(ex.getMessage().contains("serviceType"),
-                "the message has to name the paths that would have worked");
+                "the message has to give examples of paths that would have worked");
+    }
+
+    @Test
+    void validateTriggers_anyTopLevelFieldName_isAccepted() {
+        // The extractor infers each field's shape from the payload, so a new field needs no code change
+        // and no protocol is refused merely for naming one nobody has used before.
+        PlanDefinition pd = new PlanDefinition();
+        PlanDefinition.PlanDefinitionActionComponent action = stepAction(pd.addAction(), "enrol-on-bodysite");
+        codeFilterTrigger(action, "Observation", "bodySite", "http://snomed.info/sct", "1234");
+
+        assertDoesNotThrow(() -> parser.validateTriggers(pd));
     }
 
     @Test
@@ -303,7 +314,7 @@ class PlanDefinitionParserTest {
         PlanDefinition pd = new PlanDefinition();
         PlanDefinition.PlanDefinitionActionComponent parent = stepAction(pd.addAction(), "parent");
         PlanDefinition.PlanDefinitionActionComponent child = stepAction(parent.addAction(), "nested-child");
-        codeFilterTrigger(child, "Procedure", "performerType", "http://snomed.info/sct", "9999");
+        codeFilterTrigger(child, "Procedure", "performer[0].function", "http://snomed.info/sct", "9999");
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> parser.validateTriggers(pd));

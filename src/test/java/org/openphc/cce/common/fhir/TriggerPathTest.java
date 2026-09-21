@@ -5,25 +5,17 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * The matchable surface of an inbound payload. These tests are the contract between the Protocol
- * Service, which rejects a trigger on anything not listed here, and the Matcher Service, which reads
- * exactly these fields out of an event.
+ * What the Protocol Service accepts as a {@code codeFilter.path}. The Matcher Service infers a
+ * top-level field's shape from the payload, so the contract is the form of the name, not a list.
  */
 class TriggerPathTest {
 
     @Test
-    void everyPathTheMatcherReadsIsMatchable() {
-        for (TriggerPath path : TriggerPath.values()) {
-            assertTrue(TriggerPath.isMatchable(path.fhirPath()),
-                    path.fhirPath() + " is a member, so a trigger on it must be accepted");
+    void topLevelFieldNamesAreMatchable_whateverTheirShape() {
+        for (String path : new String[] {"code", "class", "serviceType", "clinicalStatus",
+                "verificationStatus", "type", "category", "identifier", "status", "bodySite", "priority"}) {
+            assertTrue(TriggerPath.isMatchable(path), path);
         }
-    }
-
-    @Test
-    void serviceTypeIsMatchable() {
-        // The path the reference ANC protocol's enrolment trigger filters on. It was indexed but never
-        // extracted, so that trigger could not fire; this is the regression guard.
-        assertTrue(TriggerPath.isMatchable("serviceType"));
     }
 
     @Test
@@ -35,34 +27,12 @@ class TriggerPathTest {
     }
 
     @Test
-    void aPathNoEventIsReadForIsNotMatchable() {
-        assertFalse(TriggerPath.isMatchable("bodySite"));
-        assertFalse(TriggerPath.isMatchable("performerType"));
+    void pathsTheExtractorCannotFollowAreNotMatchable() {
         assertFalse(TriggerPath.isMatchable("Encounter.serviceType"),
                 "paths are single field names, not dotted FHIRPath expressions");
-    }
-
-    @Test
-    void pathMatchingIsCaseSensitive() {
-        // FHIR element names are case-sensitive, and so is the index lookup that pairs a trigger row
-        // with an extracted triple — accepting 'servicetype' at load would produce a row nothing matches.
-        assertFalse(TriggerPath.isMatchable("servicetype"));
-        assertFalse(TriggerPath.isMatchable("Status"));
-    }
-
-    @Test
-    void everyMemberCarriesAShape_soTheExtractorCanReadIt() {
-        for (TriggerPath path : TriggerPath.values()) {
-            assertNotNull(path.shape(), path.fhirPath() + " needs a shape or the extractor skips it");
-        }
-    }
-
-    @Test
-    void matchablePathsNamesThemAllForErrorMessages() {
-        String listed = TriggerPath.matchablePaths();
-        for (TriggerPath path : TriggerPath.values()) {
-            assertTrue(listed.contains(path.fhirPath()),
-                    "a rejection message has to tell the author what was allowed: " + path.fhirPath());
-        }
+        assertFalse(TriggerPath.isMatchable("participant.type"));
+        assertFalse(TriggerPath.isMatchable("type[0]"));
+        assertFalse(TriggerPath.isMatchable("value[x]"));
+        assertFalse(TriggerPath.isMatchable("service type"));
     }
 }

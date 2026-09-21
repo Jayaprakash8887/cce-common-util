@@ -546,10 +546,10 @@ public class PlanDefinitionParser {
                 if (!TriggerPath.isMatchable(path)) {
                     throw new IllegalArgumentException(
                             "Action '" + action.getId() + "' has a trigger on codeFilter.path '" + path
-                                    + "', which no event payload is read for, so the trigger could never "
-                                    + "match — and because every codeFilter of an action must match, the "
-                                    + "whole action would never fire. Matchable paths: "
-                                    + TriggerPath.matchablePaths() + ".");
+                                    + "', which is not a single top-level field name (e.g. 'code', 'class', "
+                                    + "'serviceType'). Event payloads are read one top-level field at a time, "
+                                    + "so the trigger could never match — and because every codeFilter of an "
+                                    + "action must match, the whole action would never fire.");
                 }
             }
         }
