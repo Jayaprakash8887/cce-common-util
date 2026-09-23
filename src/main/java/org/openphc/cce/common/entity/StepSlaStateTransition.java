@@ -50,8 +50,9 @@ public class StepSlaStateTransition {
     @UuidGenerator(algorithm = UuidV7Generator.class)
     private UUID id;
 
-    @Column(name = "step_instance_id", nullable = false)
-    private UUID stepInstanceId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "step_instance_id", nullable = false)
+    private StepInstance stepInstance;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "transition_type", nullable = false)

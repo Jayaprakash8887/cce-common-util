@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.openphc.cce.common.entity.StepInstance;
 import org.openphc.cce.common.entity.StepSlaStateTransition;
 import org.openphc.cce.common.enums.SlaStatus;
 import org.openphc.cce.common.enums.SlaTransitionType;
@@ -89,7 +90,7 @@ class SlaThresholdReaderTest {
     private StepSlaStateTransition row(UUID stepId, SlaTransitionType type, OffsetDateTime processBy) {
         return StepSlaStateTransition.builder()
                 .id(UUID.randomUUID())
-                .stepInstanceId(stepId)
+                .stepInstance(StepInstance.builder().id(stepId).build())
                 .transitionType(type)
                 .processBy(processBy)
                 .nextAttemptAt(processBy)
