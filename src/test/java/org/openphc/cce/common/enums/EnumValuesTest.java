@@ -116,4 +116,33 @@ class EnumValuesTest {
                 "PENDING is a null sla_status, not an enum value");
         assertEquals(3, SlaStatus.values().length);
     }
+
+    @Test
+    void everySlaStatusReplacesAStepNotYetJudged() {
+        for (SlaStatus status : SlaStatus.values()) {
+            assertTrue(status.canReplace(null), status + " over null");
+        }
+    }
+
+    @Test
+    void slaStatusMovesForwardOnly() {
+        // The one advance there is: a step found late can still be written off.
+        assertTrue(SlaStatus.MISSED.canReplace(SlaStatus.OVERDUE));
+        // Two rows for one step applied out of order after a retry must not walk MISSED back.
+        assertFalse(SlaStatus.OVERDUE.canReplace(SlaStatus.MISSED));
+        // No status rewrites itself: a second write would duplicate the history row.
+        for (SlaStatus status : SlaStatus.values()) {
+            assertFalse(status.canReplace(status), status + " over itself");
+        }
+    }
+
+    @Test
+    void metReplacesNothingButNull_andNothingReplacesMet() {
+        // A step some deadline has already judged cannot be told retrospectively that it was on time.
+        assertFalse(SlaStatus.MET.canReplace(SlaStatus.OVERDUE));
+        assertFalse(SlaStatus.MET.canReplace(SlaStatus.MISSED));
+        // And once on time, no later threshold can say otherwise.
+        assertFalse(SlaStatus.OVERDUE.canReplace(SlaStatus.MET));
+        assertFalse(SlaStatus.MISSED.canReplace(SlaStatus.MET));
+    }
 }

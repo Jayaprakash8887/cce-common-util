@@ -26,6 +26,13 @@ package org.openphc.cce.common.enums;
  * {@code COMPLETED + MET} is on time, {@code COMPLETED + OVERDUE} is late, and
  * {@code COMPLETED + MISSED} is late past the point the step was written off.
  *
+ * <h2>Which status may replace which</h2>
+ * Each constant carries its place in the forward-only order, so the rule is stated here, next to the
+ * statuses it orders, and read through {@link #canReplace} rather than re-derived by each writer. A new
+ * status is one constant with its rank: the ranks are spaced so an interim one fits between two
+ * existing ones without renumbering, and the constructor arguments are mandatory, so a constant cannot
+ * be added without being placed.
+ *
  * @see StepStatus
  * @see SlaTransitionType
  */
@@ -35,20 +42,48 @@ public enum SlaStatus {
      * The due threshold passed and the event had not arrived by then. Not terminal: the missed
      * threshold can still move it to {@link #MISSED}.
      */
-    OVERDUE,
+    OVERDUE(20, false),
 
     /**
      * The missed threshold passed and the event had not arrived by then. Terminal: a later event still
      * sets {@link StepStatus#COMPLETED}, but the SLA stays missed.
      */
-    MISSED,
+    MISSED(30, false),
 
     /**
      * The SLA was satisfied — the event arrived before the step's {@code due_date}. Terminal.
      *
-     * <p>Written by the Step SLA Service's sweep of {@code step_instance}, not by applying a
-     * {@code step_sla_state_transition} row: being on time is a statement about the step, answerable
-     * from its own {@code completed_at} and {@code due_date} with no threshold to cross.
+     * <p>Written only over null, when the step's {@code MET_CONDITION_REACHED} row is applied. It says
+     * the step beat its due date, which a step some deadline has already judged cannot be told
+     * retrospectively. Ranked with {@link #MISSED}, so no breach replaces it either.
      */
-    MET
+    MET(30, true);
+
+    /** Position in the forward-only order. Null, "not yet judged", precedes every rank. */
+    private final int rank;
+
+    /** Whether this status may be written only over null, never over another verdict. */
+    private final boolean onlyFromUnjudged;
+
+    SlaStatus(int rank, boolean onlyFromUnjudged) {
+        this.rank = rank;
+        this.onlyFromUnjudged = onlyFromUnjudged;
+    }
+
+    /**
+     * Whether this status may replace {@code current} on a step.
+     *
+     * <p>Forward-only: a status replaces null or a lower rank, never an equal or higher one — so
+     * {@code OVERDUE} can never replace {@code MISSED}, which is what two rows for one step applied out
+     * of order after a retry would otherwise do. A status marked only-from-unjudged ({@link #MET})
+     * replaces null alone.
+     *
+     * @param current the step's status now; null when it has not been judged
+     */
+    public boolean canReplace(SlaStatus current) {
+        if (current == null) {
+            return true;
+        }
+        return !onlyFromUnjudged && rank > current.rank;
+    }
 }

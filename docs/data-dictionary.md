@@ -835,6 +835,8 @@ Did the expected clinical event arrive? Independent of timeliness.
 
 Was the deadline met? Independent of whether the work was recorded. Only a null status and `OVERDUE`
 are live — a step in `MET` or `MISSED` has no threshold left to cross and is never advanced again.
+The transitions below are held on the enum itself (`SlaStatus.canReplace`), so a writer asks it rather
+than restating them.
 
 Evaluated against `completed_at` (the **clinical occurrence time** of the completing event — see
 clinical event time extraction, in the Matcher Service repo), so timeliness
