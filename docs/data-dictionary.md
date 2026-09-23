@@ -559,7 +559,7 @@ Records **protocol deviations** — three kinds, written by two services.
 
 When intelligence actions are configured on the step's PlanDefinition action, the `IntelligenceActionEvaluator` is invoked and the `intelligence_event_id` is populated with the published event's UUID.
 
-A step has **at most one deviation per type** — enforced by the `deviation_step_type_key` unique constraint on `(step_instance_id, deviation_type)`. This makes deviation creation idempotent against a retried evaluation and concurrent threads: `DeviationRecorder.recordDeviation` pre-checks for an existing deviation and returns it instead of inserting a duplicate, with the unique constraint as the ultimate backstop. It returns a `DeviationResult(deviation, created)`; the `created` flag lets callers fire one-time side effects (intelligence action evaluation) **only** when a new deviation was actually inserted, so a redelivered or concurrent trigger produces neither a duplicate deviation row nor a duplicate intelligence event.
+A step has **at most one deviation per type** — enforced by the `deviation_step_type_key` unique constraint on `(step_instance_id, deviation_type)`. No writer can reach the same (step, type) twice: `OVERDUE` and `MISSED` are raised only when their `sla_status` write succeeds, which `SlaStatus.canReplace` allows once, and `ORDER_VIOLATION` only when a step completes, which it does once. So `DeviationRecorder` inserts without looking for an existing row, and the constraint is the guarantee — a duplicate means one of those rules broke, and it fails the transaction rather than being skipped. Callers evaluate intelligence actions for every deviation recorded, since each one is new.
 
 ### Columns
 
@@ -579,7 +579,7 @@ A step has **at most one deviation per type** — enforced by the `deviation_ste
 |------|------|---------|
 | Primary Key | `deviation_pkey` | `id` |
 | Foreign Key | `deviation_step_instance_id_fkey` | `step_instance_id` → `step_instance(id)` |
-| Unique | `deviation_step_type_key` | `(step_instance_id, deviation_type)` — At most one deviation per type per step. Idempotency guard against a retried evaluation or concurrent writers. Note it permits one `OVERDUE` **and** one `MISSED` row per step, so a step that goes overdue and is later missed yields two deviations. |
+| Unique | `deviation_step_type_key` | `(step_instance_id, deviation_type)` — At most one deviation per type per step. The only enforcement: `DeviationRecorder` does not pre-check. Note it permits one `OVERDUE` **and** one `MISSED` row per step, so a step that goes overdue and is later missed yields two deviations. |
 | Check | — | `deviation_type IN ('OVERDUE', 'MISSED', 'ORDER_VIOLATION')` |
 
 ---

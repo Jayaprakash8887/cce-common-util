@@ -249,7 +249,7 @@ the past, and its rows are due the moment they are written — long before the c
 the same backlog, has been matched.
 
 None of it can be walked back. `sla_status` writes are forward-only and `MET` is written only over a
-null, so the wrong verdict stands; the deviation is de-duplicated, so it is not reconsidered; and the
+null, so the wrong verdict stands; the deviation is never withdrawn or raised again; and the
 intelligence event has already been published, so a clinician has already been alerted.
 
 Waiting costs nothing but latency. The judgement never consults the wall clock, so a row applied days

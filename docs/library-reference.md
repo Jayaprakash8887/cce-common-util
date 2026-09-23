@@ -199,18 +199,15 @@ by either directly.
 
 ### `deviation` — `DeviationRecorder`
 
-`recordDeviation` inserts a `deviation` row and reports whether the row was new, so the caller can
-avoid re-triggering intelligence for a deviation already recorded. An empty metadata map is stored as
-null rather than as an empty JSON object, so the absence of detail reads the same however it was
-recorded.
+`recordDeviation` inserts a `deviation` row and returns it. It does not look for an existing one first:
+every caller already guarantees a (step, type) is raised once, and the `deviation_step_type_key` unique
+constraint fails the transaction if that ever breaks (see the [data dictionary](data-dictionary.md)). An
+empty metadata map is stored as null rather than as an empty JSON object, so the absence of detail reads
+the same however it was recorded.
 
 `recordDeviations` is the batch form, for a caller that finds many deviations in one transaction (the
-Step SLA Service, once per batch). It makes one existence query for every step in the batch rather than
-one per deviation, then queues all the new rows at once. That matters for more than the query count: a
-per-deviation check queries `deviation` while an earlier insert is still pending, which makes Hibernate
-flush that insert first, so no two inserts could ever share a JDBC batch. A (step, type) pair repeated
-within the batch is recorded once. Results come back one per request, in order, with the same
-`created` flag.
+Step SLA Service, once per batch). It queues every row in one `saveAll`, with no query in between, so
+Hibernate sends them as one JDBC batch at commit. The inserted rows come back in the order given.
 
 ### `sla` — `SlaThresholdReader`
 
