@@ -761,6 +761,12 @@ Other properties they share:
   joining the base tables. Trade-off: a hard-deleted base row leaves its history ungroupable, and it
   drops out of the backfill. Accepted — a deleted instance is treated as removed from historical
   rollups too.
+- **Ids allocated in blocks.** The entities draw ids from the `<table>_id_seq` sequence 50 at a time
+  (Hibernate's pooled optimizer), and the sequence steps by 50 to match (Matcher `V6`), so a batch of
+  history rows is inserted as one JDBC batch instead of one round trip each. Each service instance
+  takes its own block, so ids from different writers interleave out of insert order: order history by
+  `changed_at`, never by `id`. Hibernate refuses to start if the sequence's increment and the allocation
+  size disagree.
 - Consumed **only** by the historical-backfill job (`data-pipeline/schema/09-historical-backfill.sql`),
   run after a full re-snapshot. Normal forward operation never reads them.
 
@@ -768,7 +774,7 @@ Other properties they share:
 
 | Column | Data Type | Nullable | Default | Description |
 |--------|-----------|----------|---------|-------------|
-| `id` | `BIGSERIAL` | **NOT NULL** | sequence | Primary key, and insertion order. |
+| `id` | `BIGSERIAL` | **NOT NULL** | sequence | Primary key. Unique, but **not** insertion order — see *Ids allocated in blocks* above. |
 | `protocol_instance_id` | `UUID` | **NOT NULL** | — | The enrolment whose status changed. No FK. Backfill joins `protocol_instance` on it to recover `protocol_definition_id`. |
 | `status` | `VARCHAR` | **NOT NULL** | — | The status *after* this transition. See [ProtocolInstanceStatus](#protocolinstancestatus). |
 | `changed_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | When the transition took effect. Caller-supplied rather than stamped on insert: the initial row receives `protocol_instance.enrolled_at`, which is the clinical occurrence time of the enrolling event, not the moment the row was written. |
@@ -781,7 +787,7 @@ Other properties they share:
 
 | Column | Data Type | Nullable | Default | Description |
 |--------|-----------|----------|---------|-------------|
-| `id` | `BIGSERIAL` | **NOT NULL** | sequence | Primary key, and insertion order. |
+| `id` | `BIGSERIAL` | **NOT NULL** | sequence | Primary key. Unique, but **not** insertion order — see *Ids allocated in blocks* above. |
 | `step_instance_id` | `UUID` | **NOT NULL** | — | The step whose state changed. No FK. Backfill joins `step_instance` on it to recover `protocol_instance_id`. |
 | `step_status` | `VARCHAR` | **NOT NULL** | — | The step status *after* this transition. See [StepStatus](#stepstatus). Written by the Matcher Service. |
 | `sla_status` | `VARCHAR` | Yes | — | The SLA status *after* this transition. See [SlaStatus](#slastatus). **Nullable**, mirroring the column it copies: null on any row recorded before a threshold had fallen due, and on every row of a step with no SLA. Written by the Step SLA Service. |

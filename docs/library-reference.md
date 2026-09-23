@@ -204,6 +204,14 @@ avoid re-triggering intelligence for a deviation already recorded. An empty meta
 null rather than as an empty JSON object, so the absence of detail reads the same however it was
 recorded.
 
+`recordDeviations` is the batch form, for a caller that finds many deviations in one transaction (the
+Step SLA Service, once per batch). It makes one existence query for every step in the batch rather than
+one per deviation, then queues all the new rows at once. That matters for more than the query count: a
+per-deviation check queries `deviation` while an earlier insert is still pending, which makes Hibernate
+flush that insert first, so no two inserts could ever share a JDBC batch. A (step, type) pair repeated
+within the batch is recorded once. Results come back one per request, in order, with the same
+`created` flag.
+
 ### `sla` — `SlaThresholdReader`
 
 Reads a step's `dueDate` / `missedDate` back from its `step_sla_state_transition` rows. A

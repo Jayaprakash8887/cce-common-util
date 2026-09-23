@@ -12,8 +12,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -41,6 +47,9 @@ public class DeviationRecorder {
      *                  intelligence evaluation — when this is {@code true}.
      */
     public record DeviationResult(Deviation deviation, boolean created) {}
+
+    /** One deviation to record: this step, this type, no metadata. */
+    public record PendingDeviation(StepInstance step, DeviationType deviationType) {}
 
     /**
      * Record a deviation for a step, with no metadata.
@@ -101,4 +110,68 @@ public class DeviationRecorder {
 
         return new DeviationResult(deviation, true);
     }
+
+    /**
+     * Record a batch of deviations, with no metadata — {@link #recordDeviation(StepInstance, DeviationType)}
+     * for many steps at once.
+     *
+     * <p>The same one-per-(step, type) guarantee, checked with a single query for the whole batch rather
+     * than one per deviation. That is what lets the inserts be batched: a per-deviation check queries the
+     * {@code deviation} table while an earlier insert is still pending, which makes Hibernate flush it
+     * first, so every insert went out on its own. Here the check runs once, before anything is queued,
+     * and the new rows are flushed together at commit. The {@code deviation_step_type_key} unique
+     * constraint remains the backstop against a concurrent insert racing past the check.
+     *
+     * <p>A (step, type) pair repeated within the batch is recorded once; the repeats get
+     * {@code created=false} with the same deviation.
+     *
+     * @return one result per pending deviation, in the order given
+     */
+    public List<DeviationResult> recordDeviations(List<PendingDeviation> pendingDeviations) {
+        if (pendingDeviations.isEmpty()) {
+            return List.of();
+        }
+
+        Set<UUID> stepIds = pendingDeviations.stream()
+                .map(pending -> pending.step().getId())
+                .collect(Collectors.toSet());
+        Map<StepAndType, Deviation> recorded = new HashMap<>();
+        for (Deviation existing : deviationRepository.findByStepInstanceIdIn(stepIds)) {
+            recorded.put(new StepAndType(existing.getStepInstance().getId(), existing.getDeviationType()),
+                    existing);
+        }
+
+        OffsetDateTime detectedAt = OffsetDateTime.now(ZoneOffset.UTC);
+        List<DeviationResult> results = new ArrayList<>(pendingDeviations.size());
+        List<Deviation> toInsert = new ArrayList<>();
+        for (PendingDeviation pending : pendingDeviations) {
+            StepAndType key = new StepAndType(pending.step().getId(), pending.deviationType());
+            Deviation existing = recorded.get(key);
+            if (existing != null) {
+                log.debug("Deviation {} already exists for step {} — skipping duplicate creation",
+                        pending.deviationType(), pending.step().getId());
+                results.add(new DeviationResult(existing, false));
+                continue;
+            }
+
+            Deviation deviation = Deviation.builder()
+                    .stepInstance(pending.step())
+                    .deviationType(pending.deviationType())
+                    .detectedAt(detectedAt)
+                    .build();
+            recorded.put(key, deviation);
+            toInsert.add(deviation);
+            results.add(new DeviationResult(deviation, true));
+        }
+
+        deviationRepository.saveAll(toInsert);
+        for (Deviation deviation : toInsert) {
+            log.info("Recorded {} deviation: deviationId={}, stepId={}, actionId={}",
+                    deviation.getDeviationType(), deviation.getId(), deviation.getStepInstance().getId(),
+                    deviation.getStepInstance().getActionId());
+        }
+        return results;
+    }
+
+    private record StepAndType(UUID stepInstanceId, DeviationType deviationType) {}
 }

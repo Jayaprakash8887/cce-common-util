@@ -20,6 +20,7 @@ import org.openphc.cce.common.repository.DeviationRepository;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -180,6 +181,81 @@ class DeviationRecorderTest {
 
         // recordDeviation never links an intelligence event; the caller does that after evaluating
         assertNull(result.deviation().getIntelligenceEventId());
+    }
+
+    // --- recordDeviations: the batch form ---
+
+    @Test
+    void recordDeviations_checksTheWholeBatchWithOneQueryAndInsertsWithOneSaveAll() {
+        // One existence query, one saveAll: nothing queries the deviation table between inserts, so
+        // Hibernate is free to send them as one JDBC batch at commit.
+        ProtocolInstance protocolInstance = buildProtocolInstance();
+        StepInstance first = buildStep(protocolInstance, SlaStatus.OVERDUE);
+        StepInstance second = buildStep(protocolInstance, SlaStatus.MISSED);
+        when(deviationRepository.findByStepInstanceIdIn(anyCollection())).thenReturn(List.of());
+
+        List<DeviationRecorder.DeviationResult> results = service.recordDeviations(List.of(
+                new DeviationRecorder.PendingDeviation(first, DeviationType.OVERDUE),
+                new DeviationRecorder.PendingDeviation(second, DeviationType.MISSED)));
+
+        assertEquals(2, results.size());
+        assertTrue(results.get(0).created());
+        assertEquals(first, results.get(0).deviation().getStepInstance());
+        assertEquals(DeviationType.OVERDUE, results.get(0).deviation().getDeviationType());
+        assertNotNull(results.get(0).deviation().getDetectedAt());
+        assertTrue(results.get(1).created());
+        assertEquals(DeviationType.MISSED, results.get(1).deviation().getDeviationType());
+        verify(deviationRepository, times(1)).findByStepInstanceIdIn(anyCollection());
+        verify(deviationRepository, times(1)).saveAll(argThat(inserted ->
+                inserted instanceof List<?> list && list.size() == 2));
+        verify(deviationRepository, never()).save(any());
+        verify(deviationRepository, never()).findByStepInstanceIdAndDeviationType(any(), any());
+    }
+
+    @Test
+    void recordDeviations_skipsAStepAndTypeAlreadyRecorded_butNotAnotherTypeOfTheSameStep() {
+        ProtocolInstance protocolInstance = buildProtocolInstance();
+        StepInstance step = buildStep(protocolInstance, SlaStatus.MISSED);
+        Deviation existingOverdue = Deviation.builder()
+                .id(UUID.randomUUID())
+                .stepInstance(step)
+                .deviationType(DeviationType.OVERDUE)
+                .build();
+        when(deviationRepository.findByStepInstanceIdIn(anyCollection())).thenReturn(List.of(existingOverdue));
+
+        List<DeviationRecorder.DeviationResult> results = service.recordDeviations(List.of(
+                new DeviationRecorder.PendingDeviation(step, DeviationType.OVERDUE),
+                new DeviationRecorder.PendingDeviation(step, DeviationType.MISSED)));
+
+        assertFalse(results.get(0).created());
+        assertSame(existingOverdue, results.get(0).deviation());
+        assertTrue(results.get(1).created());
+        assertEquals(DeviationType.MISSED, results.get(1).deviation().getDeviationType());
+        verify(deviationRepository).saveAll(argThat(inserted ->
+                inserted instanceof List<?> list && list.size() == 1));
+    }
+
+    @Test
+    void recordDeviations_recordsARepeatedStepAndTypeOnce() {
+        ProtocolInstance protocolInstance = buildProtocolInstance();
+        StepInstance step = buildStep(protocolInstance, SlaStatus.OVERDUE);
+        when(deviationRepository.findByStepInstanceIdIn(anyCollection())).thenReturn(List.of());
+
+        List<DeviationRecorder.DeviationResult> results = service.recordDeviations(List.of(
+                new DeviationRecorder.PendingDeviation(step, DeviationType.OVERDUE),
+                new DeviationRecorder.PendingDeviation(step, DeviationType.OVERDUE)));
+
+        assertTrue(results.get(0).created());
+        assertFalse(results.get(1).created());
+        assertSame(results.get(0).deviation(), results.get(1).deviation());
+        verify(deviationRepository).saveAll(argThat(inserted ->
+                inserted instanceof List<?> list && list.size() == 1));
+    }
+
+    @Test
+    void recordDeviations_withNothingPending_touchesNothing() {
+        assertEquals(List.of(), service.recordDeviations(List.of()));
+        verifyNoInteractions(deviationRepository);
     }
 
     // --- Helpers ---

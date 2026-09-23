@@ -23,8 +23,19 @@ import java.util.UUID;
 @Builder
 public class StepInstanceHistory {
 
+    /**
+     * From the {@code step_instance_history_id_seq} sequence behind the BIGSERIAL column, taken 50 at a time so a
+     * batch of history rows can be inserted in one JDBC batch — {@code IDENTITY} made Hibernate run
+     * each insert on its own to read the key back. The sequence steps by 50 to match (Matcher's
+     * {@code V6} migration); Hibernate refuses to start if the two disagree.
+     *
+     * <p>Ids therefore no longer arrive in insert order across writers: each service instance draws
+     * from its own block. Nothing orders history by id — reconstruction orders by {@code changed_at},
+     * and ClickHouse uses the id only as the row's unique key.
+     */
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "step_instance_history_id_seq")
+    @SequenceGenerator(name = "step_instance_history_id_seq", sequenceName = "step_instance_history_id_seq", allocationSize = 50)
     private Long id;
 
     @Column(name = "step_instance_id", nullable = false)

@@ -5,6 +5,8 @@ import org.openphc.cce.common.enums.DeviationType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -17,4 +19,10 @@ public interface DeviationRepository extends JpaRepository<Deviation, UUID> {
      * creation idempotent against redelivered / concurrent scheduler triggers.
      */
     Optional<Deviation> findByStepInstanceIdAndDeviationType(UUID stepInstanceId, DeviationType deviationType);
+
+    /**
+     * Every deviation already recorded for any of these steps — the batch form of the idempotency
+     * check above, so a batch of deviations costs one query rather than one per deviation.
+     */
+    List<Deviation> findByStepInstanceIdIn(Collection<UUID> stepInstanceIds);
 }
