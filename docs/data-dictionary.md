@@ -467,7 +467,7 @@ settles every threshold it still has against its `completed_at`. Neither transit
                                                  │  missed_date (could)        + deviation
                                                  ▼
                                            ┌───────────┐
-                                           │    MET    │◀── completed before due_date
+                                           │    MET    │◀── completed by due_date
                                            └───────────┘
 ```
 
@@ -482,7 +482,7 @@ reason for the split.
 Each step's SLA schedule: one row per verdict the Step SLA Service has to reach. The two deadline rows
 are written by the Matcher Service in the same transaction that creates the step, so a step never exists
 without its schedule; the `MET_CONDITION_REACHED` row is written in the transaction that completes the
-step, and only when the work beat the due date.
+step, and only when the work landed on or before the due date (inclusive).
 
 **Mandatory steps only.** Nothing is required of an optional step, so it has no deadline to breach and
 none to have beaten — it gets no rows of any kind and its `sla_status` stays null. Enforced where rows
@@ -850,10 +850,10 @@ reflects when the act happened, not when the event was ingested.
 
 | Value | Condition | Transitions From | Transitions To |
 |-------|-----------|-----------------|----------------|
-| *(null)* | Nothing to judge on yet: no threshold has fallen due, and the step has not completed either. Transient for a completed mandatory step: one that beat its `due_date` is settled `MET` within a cycle of the completion, one that did not is settled when its due-date row comes round. Also the permanent state of a step with no due date and of an optional step, where no SLA applies. **Not an enum value**: the column is nullable, and null is the initial state. | *(initial)* | `OVERDUE`, `MET` |
+| *(null)* | Nothing to judge on yet: no threshold has fallen due, and the step has not completed either. Transient for a completed mandatory step: one completed by its `due_date` is settled `MET` within a cycle of the completion, one that did not is settled when its due-date row comes round. Also the permanent state of a step with no due date and of an optional step, where no SLA applies. **Not an enum value**: the column is nullable, and null is the initial state. | *(initial)* | `OVERDUE`, `MET` |
 | `OVERDUE` | The due threshold fell and the work was not recorded by then. An `OVERDUE` deviation is recorded. | *(null)* | `MISSED` |
 | `MISSED` | Past the missed threshold and the event never arrived. A `MISSED` deviation is recorded. | `OVERDUE` | *(terminal)* |
-| `MET` | The work was recorded before the step's `due_date`. Written only from null, and only when the step's `MET_CONDITION_REACHED` row is applied — Matcher writes that row at the completion itself, so an on-time completion is recorded without waiting for a deadline, and a step already found `OVERDUE` is never relabelled as on time. | *(null)* | *(terminal)* |
+| `MET` | The work was recorded on or before the step's `due_date` (inclusive). Written only from null, and only when the step's `MET_CONDITION_REACHED` row is applied — Matcher writes that row at the completion itself, so an on-time completion is recorded without waiting for a deadline, and a step already found `OVERDUE` is never relabelled as on time. | *(null)* | *(terminal)* |
 
 #### Reading the pair
 
@@ -880,13 +880,13 @@ Every combination is meaningful, and `completed_at` / `due_date` are available f
 
 The transition types Matcher writes to `step_sla_state_transition.transition_type`. Two are deadlines
 the step may cross; the third is a condition it has already satisfied, written when the completing event
-lands before the due date. Every SLA verdict comes from one of these rows.
+lands on or before the due date. Every SLA verdict comes from one of these rows.
 
 | Value | Threshold | `sla_status` if the work was recorded in time | if it was not | Deviation on a breach |
 |---|---|---|---|---|
 | `DUE_DATE_REACHED` | the step's due date | *(unchanged — the step's `MET_CONDITION_REACHED` row carries that verdict)* | `OVERDUE` | `OVERDUE` |
 | `MISSED_DATE_REACHED` | due date + `tolerance-days` | *(unchanged — no breach to record)* | `MISSED` | `MISSED` |
-| `MET_CONDITION_REACHED` | the completion itself, when it beat the due date | `MET` | *(n/a — the row exists only because the work was on time)* | *(none — nothing deviant about on-time work)* |
+| `MET_CONDITION_REACHED` | the completion itself, when it landed on or before the due date | `MET` | *(n/a — the row exists only because the work was on time)* | *(none — nothing deviant about on-time work)* |
 
 Rows are written for **mandatory steps only** (`requiredBehavior: "must"`; an absent value is not
 mandatory). Nothing is required of an optional step, so it has no deadline to breach: Matcher schedules

@@ -54,7 +54,7 @@ public enum SlaStatus {
      * The SLA was satisfied — the event arrived before the step's {@code due_date}. Terminal.
      *
      * <p>Written only over null, when the step's {@code MET_CONDITION_REACHED} row is applied. It says
-     * the step beat its due date, which a step some deadline has already judged cannot be told
+     * the step met its due date, which a step some deadline has already judged cannot be told
      * retrospectively. Ranked with {@link #MISSED}, so no breach replaces it either.
      */
     MET(30, true);
