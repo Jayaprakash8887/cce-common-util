@@ -5,11 +5,11 @@ package org.openphc.cce.common.enums;
  *
  * <p>Two of them are deadlines the step may cross — the due date and the missed date — and one is a
  * condition the step has already satisfied: {@link #MET_CONDITION_REACHED}, written when the work is
- * recorded before the due date. All three are schedules in the same sense: a row says <em>there is a
+ * recorded by the due date. All three are schedules in the same sense: a row says <em>there is a
  * verdict to reach here</em>, and the Step SLA Service reaches it when the row comes round.
  *
  * <p>The names describe what the row stands for, not a from/to pair. A crossed threshold implies no
- * single destination — a step that beat its due date records nothing when that row is applied — so what
+ * single destination — a step recorded by its due date records nothing when that row is applied — so what
  * a row records is which point in the SLA was reached, and the verdict is read from
  * {@code step_instance.sla_status}.
  *
@@ -35,7 +35,7 @@ public enum SlaTransitionType {
     MISSED_DATE_REACHED(SlaStatus.MISSED, DeviationType.MISSED),
 
     /**
-     * The step's work was recorded before its due date. Unlike the other two this row is not scheduled
+     * The step's work was recorded by its due date (inclusive: at the due-date instant counts). Unlike the other two this row is not scheduled
      * when the step is created — nothing is known then — but written by Matcher at the moment the
      * completing event lands, with a {@code process_by} of that {@code completed_at}. So it is due
      * immediately and the Step SLA Service records {@link SlaStatus#MET} on its next cycle, rather than

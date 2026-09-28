@@ -122,7 +122,7 @@ stateDiagram-v2
     direction LR
     state "sla_status — was it on time?" as SL {
         [*] --> null : no threshold judged yet
-        null --> MET : due date passes, work was recorded before it
+        null --> MET : due date passes, work was recorded by it
         null --> OVERDUE : due date passes, work was not
         OVERDUE --> MISSED : missed date passes, work still not recorded
     }
@@ -192,12 +192,12 @@ time:
 | Row | Step when applied | `sla_status` | Deviation |
 |---|---|---|---|
 | `DUE_DATE_REACHED` | not completed | `OVERDUE` | `OVERDUE` |
-| `DUE_DATE_REACHED` | `completed_at >= process_by` | `OVERDUE` | `OVERDUE` |
-| `DUE_DATE_REACHED` | `completed_at < process_by` | *unchanged* | — |
+| `DUE_DATE_REACHED` | `completed_at > process_by` | `OVERDUE` | `OVERDUE` |
+| `DUE_DATE_REACHED` | `completed_at <= process_by` | *unchanged* | — |
 | `MISSED_DATE_REACHED` | not completed | `MISSED` | `MISSED` |
-| `MISSED_DATE_REACHED` | `completed_at >= process_by` | `MISSED` | `MISSED` |
-| `MISSED_DATE_REACHED` | `completed_at < process_by` | *unchanged* | — |
-| `MET_CONDITION_REACHED` | `completed_at < due_date` | `MET` | — |
+| `MISSED_DATE_REACHED` | `completed_at > process_by` | `MISSED` | `MISSED` |
+| `MISSED_DATE_REACHED` | `completed_at <= process_by` | *unchanged* | — |
+| `MET_CONDITION_REACHED` | `completed_at <= due_date` | `MET` | — |
 | `MET_CONDITION_REACHED` | anything else | *unchanged* | — |
 
 A *deadline* row only ever records a breach, so one whose threshold was kept is consumed. `MET` has a

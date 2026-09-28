@@ -56,7 +56,7 @@ public class StepInstance {
      * The deadline this step's work was expected to be recorded by, as the protocol definition sets it.
      *
      * <p>The functional deadline, and what {@link SlaStatus#MET} is measured against: the Step SLA
-     * Service settles a step as on time when {@link #completedAt} falls before this. A breach is not
+     * Service settles a step as on time when {@link #completedAt} falls on or before this. A breach is not
      * asked of it — {@link SlaStatus#OVERDUE} and {@link SlaStatus#MISSED} are decided by the
      * {@code process_by} of the transition row that detects them, which is what a schedule is for.
      * Written once by the Matcher Service when it creates the step, in the same transaction as the
