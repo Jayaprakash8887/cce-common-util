@@ -30,6 +30,14 @@ public class StepInstance {
     @Column(name = "action_id", nullable = false)
     private String actionId;
 
+    /**
+     * The occurrence of this step's nearest step group, or null for a step outside any group. Set when
+     * the step is created and never changed.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "step_group_instance_id")
+    private StepGroupInstance stepGroupInstance;
+
     @Column(name = "repeat_index", nullable = false)
     @Builder.Default
     private int repeatIndex = 0;

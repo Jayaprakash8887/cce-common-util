@@ -22,4 +22,9 @@ public interface StepInstanceRepository extends JpaRepository<StepInstance, UUID
             UUID protocolInstanceId, String actionId, StepStatus stepStatus);
 
     boolean existsByProtocolInstanceIdAndActionId(UUID protocolInstanceId, String actionId);
+
+    /** The steps attached to one step group occurrence. */
+    List<StepInstance> findByStepGroupInstanceId(UUID stepGroupInstanceId);
+
+    boolean existsByStepGroupInstanceIdAndActionId(UUID stepGroupInstanceId, String actionId);
 }

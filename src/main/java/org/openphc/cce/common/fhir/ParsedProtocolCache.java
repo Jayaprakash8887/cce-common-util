@@ -36,14 +36,31 @@ public class ParsedProtocolCache {
      *
      * @param steps           every step, with nested sub-steps flattened to peers
      * @param dependencyGraph the {@code relatedAction} edges normalized into one directed graph
+     * @param groups          every step group; empty for a protocol that declares none
      */
     public record ParsedProtocol(
             List<PlanDefinitionParser.StepMetadata> steps,
-            PlanDefinitionParser.DependencyGraph dependencyGraph
+            PlanDefinitionParser.DependencyGraph dependencyGraph,
+            List<PlanDefinitionParser.GroupMetadata> groups
     ) {
+        /** A protocol with no step groups. */
+        public ParsedProtocol(List<PlanDefinitionParser.StepMetadata> steps,
+                              PlanDefinitionParser.DependencyGraph dependencyGraph) {
+            this(steps, dependencyGraph, List.of());
+        }
+
         /** The metadata for one step, or null when the definition declares no such action. */
         public PlanDefinitionParser.StepMetadata step(String actionId) {
             return PlanDefinitionParser.findStep(steps, actionId);
+        }
+
+        /** The metadata for one step group, or null when the definition declares no such group. */
+        public PlanDefinitionParser.GroupMetadata group(String actionId) {
+            return PlanDefinitionParser.findGroup(groups, actionId);
+        }
+
+        public boolean hasGroups() {
+            return !groups.isEmpty();
         }
     }
 
@@ -96,6 +113,7 @@ public class ParsedProtocolCache {
     private ParsedProtocol parse(String definitionJson) {
         PlanDefinition planDefinition = planDefinitionParser.parse(definitionJson);
         List<PlanDefinitionParser.StepMetadata> steps = planDefinitionParser.extractSteps(planDefinition);
-        return new ParsedProtocol(steps, PlanDefinitionParser.buildDependencyGraph(steps));
+        List<PlanDefinitionParser.GroupMetadata> groups = planDefinitionParser.extractGroups(planDefinition);
+        return new ParsedProtocol(steps, PlanDefinitionParser.buildDependencyGraph(steps, groups), groups);
     }
 }

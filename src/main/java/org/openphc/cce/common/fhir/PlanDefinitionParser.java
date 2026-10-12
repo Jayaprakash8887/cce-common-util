@@ -13,6 +13,7 @@ import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,12 +48,42 @@ public class PlanDefinitionParser {
      * created by their own trigger without waiting.
      */
     public List<StepMetadata> extractSteps(PlanDefinition planDefinition) {
-        List<StepMetadata> result = new ArrayList<>();
+        return flatten(planDefinition).steps();
+    }
+
+    /**
+     * Extract every step group: a {@code step}-typed action with {@code groupingBehavior:
+     * logical-group}. A group is never a step, so it never appears in {@link #extractSteps}; each step
+     * names its nearest enclosing group in {@link StepMetadata#groupId()} instead.
+     */
+    public List<GroupMetadata> extractGroups(PlanDefinition planDefinition) {
+        return flatten(planDefinition).groups();
+    }
+
+    private record Flattened(List<StepMetadata> steps, List<GroupMetadata> groups) {}
+
+    private Flattened flatten(PlanDefinition planDefinition) {
+        List<StepMetadata> steps = new ArrayList<>();
+        List<GroupMetadata> groups = new ArrayList<>();
         for (PlanDefinition.PlanDefinitionActionComponent action : planDefinition.getAction()) {
             validateActionType(action);
-            flattenAction(action, result);
+            flattenAction(action, null, steps, groups);
         }
-        return result;
+        return new Flattened(steps, groups);
+    }
+
+    /**
+     * Whether an action is a step group. Only {@code logical-group} makes one: {@code visual-group} and
+     * {@code sentence-group} are presentation groupings in FHIR, so an action carrying one stays a step
+     * whose nested children are flattened as before.
+     */
+    static boolean isGroup(PlanDefinition.PlanDefinitionActionComponent action) {
+        return isStepAction(action) && hasLogicalGrouping(action);
+    }
+
+    private static boolean hasLogicalGrouping(PlanDefinition.PlanDefinitionActionComponent action) {
+        return action.hasGroupingBehavior()
+                && action.getGroupingBehavior() == PlanDefinition.ActionGroupingBehavior.LOGICALGROUP;
     }
 
     /**
@@ -95,15 +126,25 @@ public class PlanDefinitionParser {
     /**
      * The directed dependency graph of a protocol, in both directions.
      *
-     * @param successors   prerequisite action id → the steps that depend on it, each paired with the
-     *                     edge positioning it relative to that prerequisite. Drives progressive
-     *                     instantiation, which works forward from a completed step.
-     * @param predecessors dependent action id → the ids of the prerequisites it waits on
+     * @param successors      prerequisite action id → the steps that depend on it, each paired with
+     *                        the edge positioning it relative to that prerequisite. Drives progressive
+     *                        instantiation, which works forward from a completed step.
+     * @param predecessors    dependent action id (step or group) → the ids of the prerequisites it
+     *                        waits on, steps and groups alike
+     * @param groupSuccessors prerequisite action id → the step groups that depend on it. Kept apart
+     *                        from {@code successors} because a group is opened, not created as a step.
      */
     public record DependencyGraph(
             Map<String, List<StepDependency>> successors,
-            Map<String, List<String>> predecessors
+            Map<String, List<String>> predecessors,
+            Map<String, List<GroupDependency>> groupSuccessors
     ) {
+        /** A graph with no step groups in it. */
+        public DependencyGraph(Map<String, List<StepDependency>> successors,
+                               Map<String, List<String>> predecessors) {
+            this(successors, predecessors, Map.of());
+        }
+
         public List<StepDependency> successorsOf(String actionId) {
             return successors.getOrDefault(actionId, List.of());
         }
@@ -111,30 +152,46 @@ public class PlanDefinitionParser {
         public List<String> predecessorsOf(String actionId) {
             return predecessors.getOrDefault(actionId, List.of());
         }
+
+        public List<GroupDependency> groupSuccessorsOf(String actionId) {
+            return groupSuccessors.getOrDefault(actionId, List.of());
+        }
+    }
+
+    /** {@link #buildDependencyGraph(List, List)} for a protocol with no step groups. */
+    public static DependencyGraph buildDependencyGraph(List<StepMetadata> steps) {
+        return buildDependencyGraph(steps, List.of());
     }
 
     /**
      * Normalize every ordering {@code relatedAction} into a single directed graph, whichever end of
      * the relationship it was written from (see {@link RelationshipDirection}).
      *
-     * <p>Each resulting edge is expressed the {@code after-*} way round — the dependent step paired
-     * with a {@link RelatedStepInfo} naming its prerequisite — so consumers need only handle one
-     * form. {@code before-*} carries no start/end distinction that survives the flip (there is no
-     * "before the prerequisite started"), so it normalizes to {@code after-end}: the dependent is
-     * scheduled from the prerequisite's completion, offset by the same duration.
+     * <p>Each resulting edge is expressed the {@code after-*} way round — the dependent paired with a
+     * {@link RelatedStepInfo} naming its prerequisite — so consumers need only handle one form.
+     * {@code before-*} carries no start/end distinction that survives the flip (there is no "before the
+     * prerequisite started"), so it normalizes to {@code after-end}: the dependent is scheduled from
+     * the prerequisite's completion, offset by the same duration.
      *
-     * <p>Edges naming an action the definition does not declare are skipped — there is no step to
+     * <p>Steps and step groups are both nodes: either can declare an edge, and either can be named by
+     * one. A dependent step lands in {@code successors}, a dependent group in {@code groupSuccessors}.
+     *
+     * <p>Edges naming an action the definition does not declare are skipped — there is nothing to
      * schedule or wait on. {@link #findDanglingRelatedActions} reports them at load time.
      */
-    public static DependencyGraph buildDependencyGraph(List<StepMetadata> steps) {
+    public static DependencyGraph buildDependencyGraph(List<StepMetadata> steps, List<GroupMetadata> groups) {
         Map<String, StepMetadata> stepsById = steps.stream()
                 .collect(Collectors.toMap(StepMetadata::id, s -> s, (a, b) -> a));
+        Map<String, GroupMetadata> groupsById = groups.stream()
+                .collect(Collectors.toMap(GroupMetadata::id, g -> g, (a, b) -> a));
 
         Map<String, List<StepDependency>> successors = new LinkedHashMap<>();
         Map<String, List<String>> predecessors = new LinkedHashMap<>();
+        Map<String, List<GroupDependency>> groupSuccessors = new LinkedHashMap<>();
 
-        for (StepMetadata step : steps) {
-            for (RelatedStepInfo edge : step.relatedSteps()) {
+        for (Map.Entry<String, List<RelatedStepInfo>> node : declaredEdges(steps, groups).entrySet()) {
+            String declaringId = node.getKey();
+            for (RelatedStepInfo edge : node.getValue()) {
                 if (edge.actionId() == null || edge.actionId().isBlank()) {
                     continue;
                 }
@@ -144,29 +201,36 @@ public class PlanDefinitionParser {
                     continue; // concurrent-*: no ordering to derive
                 }
 
-                boolean declaringStepIsDependent = direction == RelationshipDirection.AFTER;
-                String prerequisiteId = declaringStepIsDependent ? edge.actionId() : step.id();
-                StepMetadata dependent =
-                        declaringStepIsDependent ? step : stepsById.get(edge.actionId());
+                boolean declaringIsDependent = direction == RelationshipDirection.AFTER;
+                String prerequisiteId = declaringIsDependent ? edge.actionId() : declaringId;
+                String dependentId = declaringIsDependent ? declaringId : edge.actionId();
                 String relationship =
-                        declaringStepIsDependent && "after-start".equals(edge.relationship())
+                        declaringIsDependent && "after-start".equals(edge.relationship())
                                 ? "after-start" : "after-end";
 
-                if (dependent == null || !stepsById.containsKey(prerequisiteId)) {
+                if (!stepsById.containsKey(prerequisiteId) && !groupsById.containsKey(prerequisiteId)) {
                     continue;
                 }
 
                 RelatedStepInfo normalized = new RelatedStepInfo(
                         prerequisiteId, relationship, edge.offsetValue(), edge.offsetUnit());
 
-                successors.computeIfAbsent(prerequisiteId, k -> new ArrayList<>())
-                        .add(new StepDependency(dependent, normalized));
-                predecessors.computeIfAbsent(dependent.id(), k -> new ArrayList<>())
-                        .add(prerequisiteId);
+                StepMetadata dependentStep = stepsById.get(dependentId);
+                GroupMetadata dependentGroup = groupsById.get(dependentId);
+                if (dependentStep != null) {
+                    successors.computeIfAbsent(prerequisiteId, k -> new ArrayList<>())
+                            .add(new StepDependency(dependentStep, normalized));
+                } else if (dependentGroup != null) {
+                    groupSuccessors.computeIfAbsent(prerequisiteId, k -> new ArrayList<>())
+                            .add(new GroupDependency(dependentGroup, normalized));
+                } else {
+                    continue;
+                }
+                predecessors.computeIfAbsent(dependentId, k -> new ArrayList<>()).add(prerequisiteId);
             }
         }
 
-        return new DependencyGraph(successors, predecessors);
+        return new DependencyGraph(successors, predecessors, groupSuccessors);
     }
 
     /** Look up a step's metadata by action id, or null when the definition has no such step. */
@@ -236,11 +300,16 @@ public class PlanDefinitionParser {
      * time instead of quietly producing a disconnected graph.
      */
     public static List<String> findUnorderedRelationships(List<StepMetadata> steps) {
+        return findUnorderedRelationships(steps, List.of());
+    }
+
+    /** {@link #findUnorderedRelationships(List)}, including the edges step groups declare. */
+    public static List<String> findUnorderedRelationships(List<StepMetadata> steps, List<GroupMetadata> groups) {
         List<String> found = new ArrayList<>();
-        for (StepMetadata step : steps) {
-            for (RelatedStepInfo edge : step.relatedSteps()) {
+        for (Map.Entry<String, List<RelatedStepInfo>> node : declaredEdges(steps, groups).entrySet()) {
+            for (RelatedStepInfo edge : node.getValue()) {
                 if (classifyRelationship(edge.relationship()) == RelationshipDirection.UNORDERED) {
-                    found.add("action '" + step.id() + "' -> '" + edge.actionId()
+                    found.add("action '" + node.getKey() + "' -> '" + edge.actionId()
                             + "' (relationship=" + edge.relationship() + ")");
                 }
             }
@@ -254,20 +323,35 @@ public class PlanDefinitionParser {
      * time so an authoring typo does not pass unnoticed.
      */
     public static List<String> findDanglingRelatedActions(List<StepMetadata> steps) {
-        Set<String> knownIds = steps.stream()
-                .map(StepMetadata::id)
-                .collect(Collectors.toSet());
+        return findDanglingRelatedActions(steps, List.of());
+    }
+
+    /**
+     * {@link #findDanglingRelatedActions(List)}, with step groups both declaring edges and counting as
+     * actions an edge may name.
+     */
+    public static List<String> findDanglingRelatedActions(List<StepMetadata> steps, List<GroupMetadata> groups) {
+        Map<String, List<RelatedStepInfo>> edges = declaredEdges(steps, groups);
 
         List<String> found = new ArrayList<>();
-        for (StepMetadata step : steps) {
-            for (RelatedStepInfo edge : step.relatedSteps()) {
-                if (edge.actionId() != null && !knownIds.contains(edge.actionId())) {
-                    found.add("action '" + step.id() + "' -> unknown action '"
+        for (Map.Entry<String, List<RelatedStepInfo>> node : edges.entrySet()) {
+            for (RelatedStepInfo edge : node.getValue()) {
+                if (edge.actionId() != null && !edges.containsKey(edge.actionId())) {
+                    found.add("action '" + node.getKey() + "' -> unknown action '"
                             + edge.actionId() + "'");
                 }
             }
         }
         return found;
+    }
+
+    /** Each step's and group's declared {@code relatedAction} edges, keyed by its action id. */
+    private static Map<String, List<RelatedStepInfo>> declaredEdges(List<StepMetadata> steps,
+                                                                    List<GroupMetadata> groups) {
+        Map<String, List<RelatedStepInfo>> edges = new LinkedHashMap<>();
+        steps.forEach(step -> edges.putIfAbsent(step.id(), step.relatedSteps()));
+        groups.forEach(group -> edges.putIfAbsent(group.id(), group.relatedSteps()));
+        return edges;
     }
 
     /** The ids of every step whose requiredBehavior is "must". */
@@ -276,6 +360,87 @@ public class PlanDefinitionParser {
                 .filter(s -> RequiredBehavior.isMandatory(s.requiredBehavior()))
                 .map(StepMetadata::id)
                 .collect(Collectors.toSet());
+    }
+
+    // ── Step groups ──
+
+    /** Look up a group's metadata by action id, or null when the definition has no such group. */
+    public static GroupMetadata findGroup(List<GroupMetadata> groups, String actionId) {
+        return groups.stream()
+                .filter(g -> actionId.equals(g.id()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** The steps directly inside a group: those whose nearest enclosing group it is. */
+    public static List<StepMetadata> memberSteps(String groupId, List<StepMetadata> steps) {
+        return steps.stream().filter(s -> groupId.equals(s.groupId())).toList();
+    }
+
+    /** The groups directly inside a group. */
+    public static List<GroupMetadata> memberGroups(String groupId, List<GroupMetadata> groups) {
+        return groups.stream().filter(g -> groupId.equals(g.parentGroupId())).toList();
+    }
+
+    /**
+     * The ids of the direct members a group's completion waits on: its mandatory steps and its
+     * mandatory groups. An optional group never counts, whether or not it has started; it is tracked on
+     * its own.
+     */
+    public static Set<String> mandatoryMemberIds(String groupId, List<StepMetadata> steps,
+                                                 List<GroupMetadata> groups) {
+        Set<String> ids = new LinkedHashSet<>();
+        memberSteps(groupId, steps).stream()
+                .filter(s -> RequiredBehavior.isMandatory(s.requiredBehavior()))
+                .forEach(s -> ids.add(s.id()));
+        memberGroups(groupId, groups).stream()
+                .filter(GroupMetadata::isMandatory)
+                .forEach(g -> ids.add(g.id()));
+        return ids;
+    }
+
+    /** The ids of everything inside a group, at any depth: steps and groups. */
+    public static Set<String> descendantIds(String groupId, List<StepMetadata> steps,
+                                            List<GroupMetadata> groups) {
+        Set<String> ids = new HashSet<>();
+        Deque<String> queue = new ArrayDeque<>();
+        queue.add(groupId);
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            memberSteps(current, steps).forEach(s -> ids.add(s.id()));
+            for (GroupMetadata member : memberGroups(current, groups)) {
+                if (ids.add(member.id())) {
+                    queue.add(member.id());
+                }
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * The members an occurrence of a group creates when it opens: its mandatory direct members with no
+     * predecessor inside the group. The rest arrive through progressive instantiation as their
+     * predecessors complete, with the due dates their own {@code relatedAction} offsets give them.
+     * Creating them all at once would give, say, a day-3 lab the day-0 vitals' due date.
+     *
+     * <p>A predecessor counts as inside the group wherever it sits in the group's subtree, so a step
+     * waiting on a step in a nested group is not an entry member either.
+     */
+    public static EntryMembers entryMembers(String groupId, List<StepMetadata> steps,
+                                            List<GroupMetadata> groups, DependencyGraph graph) {
+        Set<String> inside = descendantIds(groupId, steps, groups);
+        java.util.function.Predicate<String> isEntry =
+                id -> graph.predecessorsOf(id).stream().noneMatch(inside::contains);
+
+        List<StepMetadata> entrySteps = memberSteps(groupId, steps).stream()
+                .filter(s -> RequiredBehavior.isMandatory(s.requiredBehavior()))
+                .filter(s -> isEntry.test(s.id()))
+                .toList();
+        List<GroupMetadata> entryGroups = memberGroups(groupId, groups).stream()
+                .filter(GroupMetadata::isMandatory)
+                .filter(g -> isEntry.test(g.id()))
+                .toList();
+        return new EntryMembers(entrySteps, entryGroups);
     }
 
     /**
@@ -334,6 +499,11 @@ public class PlanDefinitionParser {
 
     private void indexActionTriggers(PlanDefinition.PlanDefinitionActionComponent action, 
                                      UUID protocolDefinitionId, List<TriggerIndexEntry> entries) {
+        // A group is never matched to an event, only its steps are. validateGroups refuses a group with
+        // a trigger at load; skipping here keeps one that slipped through from ever being indexed.
+        if (isGroup(action)) {
+            return;
+        }
         String actionId = action.getId();
 
         for (TriggerDefinition trigger : action.getTrigger()) {
@@ -384,7 +554,9 @@ public class PlanDefinitionParser {
      */
     private void collectConditionOnlyTriggers(PlanDefinition.PlanDefinitionActionComponent action,
                                               List<ConditionOnlyTriggerInfo> result) {
-        for (TriggerDefinition trigger : action.getTrigger()) {
+        // As in indexActionTriggers: a group's own triggers are never matched; its members' still are.
+        List<TriggerDefinition> ownTriggers = isGroup(action) ? List.of() : action.getTrigger();
+        for (TriggerDefinition trigger : ownTriggers) {
             if (hasData(trigger)) continue;
 
             Expression condition = getCondition(trigger);
@@ -420,6 +592,111 @@ public class PlanDefinitionParser {
         for (PlanDefinition.PlanDefinitionActionComponent action : planDefinition.getAction()) {
             validateActionTriggers(action);
         }
+    }
+
+    /** The extension a repeating group will use to say what starts a new cycle. */
+    static final String CYCLE_BOUNDARY_EXTENSION_URL =
+            "http://openphc.org/fhir/StructureDefinition/cycle-boundary";
+
+    /**
+     * Validate step groups at load time.
+     *
+     * <p>Permanent rules: a group has no trigger, since it is never matched to an event; it contains at
+     * least one step, directly or in a nested group, or it could never complete; only a {@code step}-typed
+     * action can be a group; its {@code selectionBehavior} is absent or {@code all}, the only one with a
+     * completion rule; and an optional group carries no deadline, as an optional step carries none.
+     *
+     * <p>Rules that hold until the feature behind them is built: no {@code timing} on a group (repeating
+     * groups), no {@code tolerance-days} on a group (group deadlines), no {@code cycle-boundary} extension
+     * (visit-driven repeats) and no {@code fire-event} action on a group (intelligence on groups). Each is
+     * refused rather than ignored, so an author never believes a setting takes effect when it does not.
+     *
+     * @throws IllegalArgumentException naming the first action that breaks a rule
+     */
+    public void validateGroups(PlanDefinition planDefinition) {
+        for (PlanDefinition.PlanDefinitionActionComponent action : planDefinition.getAction()) {
+            validateGroupsIn(action);
+        }
+    }
+
+    private void validateGroupsIn(PlanDefinition.PlanDefinitionActionComponent action) {
+        if (isIntelligenceAction(action)) {
+            if (hasLogicalGrouping(action)) {
+                throw new IllegalArgumentException(
+                        "Action '" + action.getId() + "' is a fire-event action with groupingBehavior "
+                                + "'logical-group'. Only a step-typed action can be a group; an "
+                                + "intelligence action has no members.");
+            }
+            return;
+        }
+        if (isGroup(action)) {
+            validateGroup(action);
+        }
+        for (PlanDefinition.PlanDefinitionActionComponent nested : action.getAction()) {
+            validateGroupsIn(nested);
+        }
+    }
+
+    private void validateGroup(PlanDefinition.PlanDefinitionActionComponent group) {
+        String id = group.getId();
+        if (group.hasTrigger()) {
+            throw new IllegalArgumentException(
+                    "Group '" + id + "' has a trigger. A group is never matched to an event, only its "
+                            + "steps are; put the trigger on the step it belongs to.");
+        }
+        if (!containsStep(group)) {
+            throw new IllegalArgumentException(
+                    "Group '" + id + "' contains no step. A group is complete when its mandatory steps "
+                            + "are done, so a group with none could never complete.");
+        }
+        if (group.hasSelectionBehavior()
+                && group.getSelectionBehavior() != PlanDefinition.ActionSelectionBehavior.ALL) {
+            throw new IllegalArgumentException(
+                    "Group '" + id + "' has selectionBehavior '" + group.getSelectionBehavior().toCode()
+                            + "'. Only 'all' (or no selectionBehavior) is supported: a group is complete "
+                            + "when all its mandatory members are done.");
+        }
+        Integer toleranceDays = extractToleranceDays(group);
+        String requiredBehavior = group.hasRequiredBehavior() ? group.getRequiredBehavior().toCode() : null;
+        if (toleranceDays != null && !RequiredBehavior.isMandatory(requiredBehavior)) {
+            throw new IllegalArgumentException(
+                    "Group '" + id + "' is optional (requiredBehavior="
+                            + (requiredBehavior == null ? "<absent>" : requiredBehavior)
+                            + ") and declares tolerance-days. Nothing is required of an optional group, "
+                            + "so it has no deadline to miss.");
+        }
+        if (toleranceDays != null) {
+            throw new IllegalArgumentException(
+                    "Group '" + id + "' declares tolerance-days. Group deadlines are not supported yet; "
+                            + "put tolerance-days on the group's steps.");
+        }
+        if (group.hasTiming()) {
+            throw new IllegalArgumentException(
+                    "Group '" + id + "' declares a timing. Repeating groups are not supported yet.");
+        }
+        if (group.getExtensionByUrl(CYCLE_BOUNDARY_EXTENSION_URL) != null) {
+            throw new IllegalArgumentException(
+                    "Group '" + id + "' declares the cycle-boundary extension. Visit-driven repeating "
+                            + "groups are not supported yet.");
+        }
+        for (PlanDefinition.PlanDefinitionActionComponent nested : group.getAction()) {
+            if (isIntelligenceAction(nested)) {
+                throw new IllegalArgumentException(
+                        "Group '" + id + "' has the fire-event action '" + nested.getId()
+                                + "'. Intelligence actions on a group are not supported yet; attach it "
+                                + "to one of the group's steps.");
+            }
+        }
+    }
+
+    /** Whether a group holds at least one step, directly or inside a nested group or step. */
+    private static boolean containsStep(PlanDefinition.PlanDefinitionActionComponent group) {
+        for (PlanDefinition.PlanDefinitionActionComponent nested : group.getAction()) {
+            if (isStepAction(nested) && (!isGroup(nested) || containsStep(nested))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -556,12 +833,19 @@ public class PlanDefinitionParser {
     }
 
     /**
-     * Recursively flatten an action and its nested sub-steps into the result list.
-     * Each nested step-type action becomes a peer entry; see {@link #extractSteps} for why nesting
-     * carries no dependency of its own.
+     * Recursively flatten an action and its nested sub-steps. Each nested step-type action becomes a
+     * peer entry; see {@link #extractSteps} for why nesting carries no dependency of its own.
+     *
+     * <p>A step group ({@link #isGroup}) is recorded as a {@link GroupMetadata}, never a step, and
+     * becomes the {@code groupId} of everything flattened beneath it. Plain nesting under a step passes
+     * the enclosing group down unchanged, so each step names its nearest group.
+     *
+     * @param groupId the nearest enclosing group's action id, or null outside any group
      */
     private void flattenAction(PlanDefinition.PlanDefinitionActionComponent action,
-                               List<StepMetadata> result) {
+                               String groupId,
+                               List<StepMetadata> steps,
+                               List<GroupMetadata> groups) {
         List<TriggerInfo> triggers = extractTriggerInfos(action);
         List<RelatedStepInfo> relatedSteps = extractRelatedSteps(action);
         TimingInfo timingInfo = extractTimingInfo(action);
@@ -587,29 +871,46 @@ public class PlanDefinitionParser {
             }
         }
 
-        result.add(new StepMetadata(
-                action.getId(),
-                action.getTitle(),
-                triggers,
-                relatedSteps,
-                timingInfo,
-                toleranceDays,
-                requiredBehavior,
-                intelligenceActions
-        ));
+        boolean group = isGroup(action);
+        if (group) {
+            groups.add(new GroupMetadata(
+                    action.getId(),
+                    action.getTitle(),
+                    groupId,
+                    relatedSteps,
+                    timingInfo,
+                    toleranceDays,
+                    requiredBehavior,
+                    action.hasSelectionBehavior() ? action.getSelectionBehavior().toCode() : null,
+                    intelligenceActions
+            ));
+        } else {
+            steps.add(new StepMetadata(
+                    action.getId(),
+                    action.getTitle(),
+                    triggers,
+                    relatedSteps,
+                    timingInfo,
+                    toleranceDays,
+                    requiredBehavior,
+                    intelligenceActions,
+                    groupId
+            ));
+        }
 
+        String nestedGroupId = group ? action.getId() : groupId;
         for (PlanDefinition.PlanDefinitionActionComponent nestedAction : action.getAction()) {
             if (isStepAction(nestedAction)) {
-                flattenAction(nestedAction, result);
+                flattenAction(nestedAction, nestedGroupId, steps, groups);
             }
         }
     }
 
-    private boolean isStepAction(PlanDefinition.PlanDefinitionActionComponent action) {
+    private static boolean isStepAction(PlanDefinition.PlanDefinitionActionComponent action) {
         return hasTypeCoding(action, PlanDefinitionActionType.STEP);
     }
 
-    private boolean isIntelligenceAction(PlanDefinition.PlanDefinitionActionComponent action) {
+    private static boolean isIntelligenceAction(PlanDefinition.PlanDefinitionActionComponent action) {
         return hasTypeCoding(action, PlanDefinitionActionType.FIRE_EVENT);
     }
 
@@ -628,7 +929,7 @@ public class PlanDefinitionParser {
         }
     }
 
-    private boolean hasTypeCoding(PlanDefinition.PlanDefinitionActionComponent action, PlanDefinitionActionType planActionType) {
+    private static boolean hasTypeCoding(PlanDefinition.PlanDefinitionActionComponent action, PlanDefinitionActionType planActionType) {
         if (!action.hasType()) {
             return false;
         }
@@ -827,6 +1128,12 @@ public class PlanDefinitionParser {
 
     // ── Inner record types for structured extraction ──
 
+    /**
+     * One step, with nested sub-steps flattened to peers.
+     *
+     * @param groupId the action id of the nearest step group enclosing this step, or null for a step
+     *                outside any group
+     */
     public record StepMetadata(
             String id,
             String title,
@@ -835,7 +1142,69 @@ public class PlanDefinitionParser {
             TimingInfo timing,
             Integer toleranceDays,
             String requiredBehavior,
+            List<IntelligenceActionInfo> intelligenceActions,
+            String groupId
+    ) {
+        /** A step outside any group. */
+        public StepMetadata(String id,
+                            String title,
+                            List<TriggerInfo> triggers,
+                            List<RelatedStepInfo> relatedSteps,
+                            TimingInfo timing,
+                            Integer toleranceDays,
+                            String requiredBehavior,
+                            List<IntelligenceActionInfo> intelligenceActions) {
+            this(id, title, triggers, relatedSteps, timing, toleranceDays, requiredBehavior,
+                    intelligenceActions, null);
+        }
+    }
+
+    /**
+     * A step group: a {@code step}-typed action with {@code groupingBehavior: logical-group}. It has no
+     * trigger and is never matched to an event. Its members are the steps whose {@code groupId}, and the
+     * groups whose {@code parentGroupId}, name it.
+     *
+     * @param parentGroupId     the enclosing group's action id, or null for a top-level group
+     * @param requiredBehavior  {@code "must"} makes the group mandatory; anything else, including
+     *                          absent, makes it optional, as for steps. An optional group is never
+     *                          opened in advance and never counts towards its parent's completion.
+     * @param selectionBehavior FHIR {@code selectionBehavior}; absent and {@code all} both mean every
+     *                          mandatory member must be done
+     */
+    public record GroupMetadata(
+            String id,
+            String title,
+            String parentGroupId,
+            List<RelatedStepInfo> relatedSteps,
+            TimingInfo timing,
+            Integer toleranceDays,
+            String requiredBehavior,
+            String selectionBehavior,
             List<IntelligenceActionInfo> intelligenceActions
+    ) {
+        public boolean isMandatory() {
+            return RequiredBehavior.isMandatory(requiredBehavior);
+        }
+    }
+
+    /**
+     * A forward edge to a step group: {@code group} depends on the prerequisite named by
+     * {@code edge.actionId()}, positioned by {@code edge}'s relationship and offset.
+     */
+    public record GroupDependency(
+            GroupMetadata group,
+            RelatedStepInfo edge
+    ) {}
+
+    /**
+     * What an occurrence of a group creates when it opens.
+     *
+     * @param steps  the mandatory member steps to create
+     * @param groups the mandatory member groups to open
+     */
+    public record EntryMembers(
+            List<StepMetadata> steps,
+            List<GroupMetadata> groups
     ) {}
 
     public record TriggerInfo(
