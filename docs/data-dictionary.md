@@ -468,13 +468,12 @@ parses no PlanDefinitions, so it cannot tell which members exist. Added in Match
 | `protocol_instance_id` | `UUID` | **NOT NULL** | — | Foreign key → `protocol_instance.id`. |
 | `parent_group_instance_id` | `UUID` | Yes | — | Foreign key → `step_group_instance.id`: the enclosing group's occurrence. `NULL` for a top-level group. |
 | `group_action_id` | `VARCHAR` | **NOT NULL** | — | The group's `action.id` in the PlanDefinition. |
-| `cycle_index` | `INTEGER` | **NOT NULL** | `0` | Which repeat of the group this row is, 0-based. 0 for a group that doesn't repeat. |
-| `cycle_day` | `DATE` | Yes | — | The clinical day a calendar-day cycle covers. `NULL` for every other group. |
+| `cycle_index` | `INTEGER` | **NOT NULL** | `0` | Which repeat of the group this row is, 0-based, in the order the cycles were opened. 0 for a group that doesn't repeat. |
 | `due_date` | `TIMESTAMPTZ` | Yes | — | When the occurrence's first steps are due, as its predecessor, its parent or its schedule sets it — never the time of the event that happened to open it. `NULL` when none can be worked out. |
 | `sla_status` | `VARCHAR` | Yes | — | The group deadline's verdict, same values as `step_instance.sla_status`. Written only by the Step SLA Service. |
-| `opened_at` | `TIMESTAMPTZ` | **NOT NULL** | — | Clinical time of whatever opened the occurrence. Matcher. |
-| `completed_at` | `TIMESTAMPTZ` | Yes | — | Clinical time the last mandatory member was completed. Matcher. |
-| `closed_at` | `TIMESTAMPTZ` | Yes | — | When nothing more was expected of the occurrence. A complete occurrence is closed. Matcher. |
+| `opened_at` | `TIMESTAMPTZ` | **NOT NULL** | — | Clinical event time, in UTC, of whatever opened the occurrence. Matcher. A calendar-day cycle is opened by the first event of its day, so its day is `opened_at`'s date in the deployment's time zone; it is not stored separately. |
+| `completed_at` | `TIMESTAMPTZ` | Yes | — | Clinical event time, in UTC, the last mandatory member was completed. Matcher. |
+| `closed_at` | `TIMESTAMPTZ` | Yes | — | Clinical event time, in UTC, from which nothing more was expected of the occurrence. A complete occurrence is closed. Matcher. |
 | `created_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Record creation timestamp. |
 | `updated_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Last modification timestamp. |
 
@@ -484,8 +483,7 @@ parses no PlanDefinitions, so it cannot tell which members exist. Added in Match
 | Foreign Key | `step_group_instance_protocol_instance_id_fkey` | `protocol_instance_id` → `protocol_instance(id)` |
 | Foreign Key | `step_group_instance_parent_group_instance_id_fkey` | `parent_group_instance_id` → `step_group_instance(id)` |
 | Check | `step_group_instance_sla_status_check` | `sla_status IN ('OVERDUE', 'MISSED', 'MET')` |
-| Unique | `step_group_instance_cycle_key` | `(protocol_instance_id, group_action_id, parent_group_instance_id, cycle_index)` with `NULLS NOT DISTINCT` — one row per group, parent occurrence and cycle. Without `NULLS NOT DISTINCT`, two top-level rows (null parent) would not count as duplicates. Its leading column serves lookups by enrollment. |
-| Unique (partial) | `step_group_instance_day_key` | `(protocol_instance_id, group_action_id, parent_group_instance_id, cycle_day) NULLS NOT DISTINCT WHERE cycle_day IS NOT NULL` — one calendar-day cycle per day. |
+| Unique | `step_group_instance_cycle_key` | `(protocol_instance_id, group_action_id, parent_group_instance_id, cycle_index)` with `NULLS NOT DISTINCT` — one row per group, parent occurrence and cycle. Without `NULLS NOT DISTINCT`, two top-level rows (null parent) would not count as duplicates. Its leading column serves lookups by enrollment. One calendar-day cycle per day has no index: the day depends on the deployment's time zone, so it is held by the enrollment lock every group decision takes. |
 | Partial B-tree | `idx_step_group_instance_parent` | `parent_group_instance_id WHERE parent_group_instance_id IS NOT NULL` — the occurrences inside one occurrence. |
 
 ### Status Machines

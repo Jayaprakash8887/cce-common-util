@@ -6,7 +6,6 @@ import org.hibernate.annotations.UuidGenerator;
 import org.openphc.cce.common.enums.SlaStatus;
 import org.openphc.cce.common.support.UuidV7Generator;
 
-import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -54,10 +53,6 @@ public class StepGroupInstance {
     @Builder.Default
     private int cycleIndex = 0;
 
-    /** The clinical day a calendar-day cycle covers; null for every other group. */
-    @Column(name = "cycle_day")
-    private LocalDate cycleDay;
-
     /**
      * When the occurrence's entry steps are due, as its predecessor, its parent or its schedule sets it.
      * Never the time of the event that happened to open it. Null when no planned due date can be worked
@@ -71,14 +66,22 @@ public class StepGroupInstance {
     @Column(name = "sla_status")
     private SlaStatus slaStatus;
 
+    /**
+     * Clinical event time, in UTC, of whatever opened the occurrence. A calendar-day cycle is opened by
+     * the first event of its day, so this also gives the cycle's day: its date in the deployment's time
+     * zone. The day is not stored separately.
+     */
     @Column(name = "opened_at", nullable = false)
     private OffsetDateTime openedAt;
 
-    /** Clinical time the last mandatory member was completed. Written by the Matcher Service. */
+    /** Clinical event time, in UTC, the last mandatory member was completed. Written by the Matcher Service. */
     @Column(name = "completed_at")
     private OffsetDateTime completedAt;
 
-    /** When nothing more is expected of the occurrence. Written by the Matcher Service. */
+    /**
+     * Clinical event time, in UTC, from which nothing more is expected of the occurrence. Written by the
+     * Matcher Service.
+     */
     @Column(name = "closed_at")
     private OffsetDateTime closedAt;
 
