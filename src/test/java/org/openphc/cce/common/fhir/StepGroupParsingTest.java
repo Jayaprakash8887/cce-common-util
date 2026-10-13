@@ -413,6 +413,20 @@ class StepGroupParsingTest {
         }
 
         @Test
+        void aVisitDrivenGroupWithADeadlineIsRejected_beforeEitherFeatureIsBuilt() {
+            // A permanent rule, so it must fire ahead of the phase gates on tolerance-days and
+            // cycle-boundary: lifting either gate later must not let the pair through.
+            PlanDefinition pd = reviewProtocol();
+            PlanDefinitionActionComponent review = pd.getAction().get(0);
+            review.addExtension(new Extension(
+                    PlanDefinitionParser.CYCLE_BOUNDARY_EXTENSION_URL, new CodeType("calendar-day")));
+            review.addExtension(new Extension(
+                    "http://openphc.org/fhir/StructureDefinition/tolerance-days", new IntegerType(14)));
+
+            assertRejected(pd, "has the cycle-boundary extension and declares tolerance-days");
+        }
+
+        @Test
         void anIntelligenceActionOnAGroupIsNotSupportedYet() {
             PlanDefinition pd = reviewProtocol();
             PlanDefinitionActionComponent alert = pd.getAction().get(0).addAction();

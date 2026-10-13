@@ -604,7 +604,8 @@ public class PlanDefinitionParser {
      * <p>Permanent rules: a group has no trigger, since it is never matched to an event; it contains at
      * least one step, directly or in a nested group, or it could never complete; only a {@code step}-typed
      * action can be a group; its {@code selectionBehavior} is absent or {@code all}, the only one with a
-     * completion rule; and an optional group carries no deadline, as an optional step carries none.
+     * completion rule; an optional group carries no deadline, as an optional step carries none; and nor
+     * does a visit-driven ({@code cycle-boundary}) group, whose cycles have no planned due date.
      *
      * <p>Rules that hold until the feature behind them is built: no {@code timing} on a group (repeating
      * groups), no {@code tolerance-days} on a group (group deadlines), no {@code cycle-boundary} extension
@@ -664,6 +665,12 @@ public class PlanDefinitionParser {
                             + (requiredBehavior == null ? "<absent>" : requiredBehavior)
                             + ") and declares tolerance-days. Nothing is required of an optional group, "
                             + "so it has no deadline to miss.");
+        }
+        if (toleranceDays != null && group.getExtensionByUrl(CYCLE_BOUNDARY_EXTENSION_URL) != null) {
+            throw new IllegalArgumentException(
+                    "Group '" + id + "' has the cycle-boundary extension and declares tolerance-days. A "
+                            + "visit-driven cycle opens when the patient comes back, so it has no planned "
+                            + "due date for a deadline to count from; put tolerance-days on its steps.");
         }
         if (toleranceDays != null) {
             throw new IllegalArgumentException(
