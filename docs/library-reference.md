@@ -53,7 +53,7 @@ Build wiring is covered in [Developer Setup](developer-setup.md).
 
 ## 1. `entity` — the shared persistence model
 
-Eleven types mapping ten tables (`TriggerIndexId` is `TriggerIndex`'s composite key).
+Twelve types mapping eleven tables (`TriggerIndexId` is `TriggerIndex`'s composite key).
 
 | Entity | Table |
 |---|---|
@@ -62,6 +62,7 @@ Eleven types mapping ten tables (`TriggerIndexId` is `TriggerIndex`'s composite 
 | `TriggerIndex` + `TriggerIndexId` | `trigger_index` |
 | `ProtocolInstance` | `protocol_instance` |
 | `StepInstance` | `step_instance` |
+| `StepGroupInstance` | `step_group_instance` |
 | `StepSlaStateTransition` | `step_sla_state_transition` |
 | `Deviation` | `deviation` |
 | `IntelligenceEventLog` | `intelligence_event_log` |
@@ -73,14 +74,20 @@ Identifiers are UUIDv7 via [`UuidV7Generator`](#6-support). Timestamps are stamp
 these to a clinical occurrence time, which must survive the insert rather than being overwritten
 with `now()`.
 
+`StepGroupInstance` is one occurrence of a step group for an enrollment: its group's action id, its parent occurrence for a nested group, its cycle number, and the facts `opened_at`, `due_date`, `completed_at`, `closed_at` and `sla_status`. `StepInstance.stepGroupInstance` points a step at its direct group's occurrence, or is null outside any group.
+
 `ProtocolDefinition.getCanonical()` and `ActionDefinition.getCanonical()` both render `url|version`,
 the form [`ActionDefinitionResolver`](#intelligence--actiondefinitionresolver) parses.
 
 ## 2. `repository` — Spring Data interfaces
 
-`ProtocolInstanceRepository`, `StepInstanceRepository`, `StepSlaStateTransitionRepository`,
-`DeviationRepository`, `IntelligenceEventLogRepository`, `ActionDefinitionRepository`,
-`ProtocolInstanceHistoryRepository`, `StepInstanceHistoryRepository`.
+`ProtocolInstanceRepository`, `StepInstanceRepository`, `StepGroupInstanceRepository`,
+`StepSlaStateTransitionRepository`, `DeviationRepository`, `IntelligenceEventLogRepository`,
+`ActionDefinitionRepository`, `ProtocolInstanceHistoryRepository`, `StepInstanceHistoryRepository`.
+
+`ProtocolInstanceRepository.findByIdForUpdate` reads an enrollment with a `PESSIMISTIC_WRITE` lock.
+The Matcher Service takes it before any step-group decision, so two events for one patient can't
+open the same group occurrence twice.
 
 There is deliberately **no** `ProtocolDefinitionRepository` here. Read and write access to
 definitions differ sharply by service — the Protocol Service writes them, the others read a narrow
@@ -97,14 +104,16 @@ metadata and need no FHIR context.
 | Member | Purpose |
 |---|---|
 | `parse(String)` | JSON → `PlanDefinition`; throws `DataFormatException` on malformed input |
-| `extractSteps(PlanDefinition)` | every step as `StepMetadata`, nested sub-steps flattened to peers |
-| `buildDependencyGraph(List<StepMetadata>)` | `relatedAction` edges normalized into one directed `DependencyGraph` |
+| `extractSteps(PlanDefinition)` | every step as `StepMetadata`, nested sub-steps flattened to peers; a step group is never a step, and `StepMetadata.groupId` names the step's nearest group |
+| `extractGroups(PlanDefinition)` | every step group (a `step`-typed action with `groupingBehavior: logical-group`) as `GroupMetadata` |
+| `buildDependencyGraph(List<StepMetadata>, List<GroupMetadata>)` | `relatedAction` edges normalized into one directed `DependencyGraph`, groups included as nodes |
+| `memberSteps`, `memberGroups`, `descendantIds`, `entryMembers` | a group's direct members, everything inside it, and the mandatory members with no predecessor inside it, which an occurrence creates when it opens |
 | `classifyRelationship(String)` | a FHIR relationship code → `AFTER` / `BEFORE` / `UNORDERED` |
 | `findStep`, `computeAncestors`, `computeMustPredecessorSteps`, `mustStepIds` | graph queries used for ordering checks and backfill |
 | `findUnorderedRelationships`, `findDanglingRelatedActions` | load-time diagnostics for edges that establish no ordering |
 | `buildTriggerIndexEntries(PlanDefinition, UUID)` | the trigger index rows for a definition, as persistence-agnostic `TriggerIndexEntry` records |
 | `extractConditionOnlyTriggers(PlanDefinition)` | triggers with a condition but no `data[]`, evaluated in memory |
-| `validateActionIds`, `validateActionTypes`, `validateTriggers` | load-time rejection of definitions that cannot work |
+| `validateActionIds`, `validateActionTypes`, `validateTriggers`, `validateGroups` | load-time rejection of definitions that cannot work; `validateGroups` also refuses group features that are not built yet |
 
 `buildTriggerIndexEntries` returns records rather than `TriggerIndex` entities on purpose: only the
 Protocol Service persists them, and it maps the records onto rows itself. The parser stays usable by
@@ -115,7 +124,7 @@ The direction of `relatedAction` is the subtlest thing here and is documented se
 
 ### `ParsedProtocolCache`
 
-The derived form of a definition — flattened steps plus dependency graph — keyed by definition id.
+The derived form of a definition — flattened steps, step groups and the dependency graph — keyed by definition id. `ParsedProtocol.step(id)` and `group(id)` look one up, and `hasGroups()` says whether the protocol has any.
 Deriving it costs a FHIR parse and a full tree flatten, and it is needed repeatedly for the same
 protocol: once per inbound event, again on every completion, again per intelligence evaluation.
 

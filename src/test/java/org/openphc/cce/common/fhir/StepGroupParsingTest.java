@@ -300,18 +300,6 @@ class StepGroupParsingTest {
         }
 
         @Test
-        void mandatoryMembersLeaveOutOptionalStepsAndOptionalGroups() {
-            PlanDefinition pd = reviewProtocol();
-            PlanDefinitionActionComponent counselling = group(pd.getAction().get(0).addAction(), "counselling", "could");
-            triggeredStep(counselling.addAction(), "diet", "9");
-
-            Set<String> mandatory = PlanDefinitionParser.mandatoryMemberIds("review",
-                    parser.extractSteps(pd), parser.extractGroups(pd));
-
-            assertEquals(Set.of("vitals", "hba1c"), mandatory);
-        }
-
-        @Test
         void aGroupWithNoRequiredBehaviorIsOptional_asAStepIs() {
             PlanDefinition pd = new PlanDefinition();
             PlanDefinitionActionComponent counselling = group(pd.addAction(), "counselling", null);
@@ -424,6 +412,35 @@ class StepGroupParsingTest {
                     "http://openphc.org/fhir/StructureDefinition/tolerance-days", new IntegerType(14)));
 
             assertRejected(pd, "has the cycle-boundary extension and declares tolerance-days");
+        }
+
+        @Test
+        void aStepFollowingAGroupIsNotSupportedYet() {
+            PlanDefinition pd = reviewProtocol();
+            after(triggeredStep(pd.addAction(), "referral", "57133-1"), "review", 7);
+
+            assertRejected(pd, "Action 'referral' follows group 'review'");
+        }
+
+        @Test
+        void aGroupFollowingAGroupIsNotSupportedYet() {
+            PlanDefinition pd = reviewProtocol();
+            PlanDefinitionActionComponent followUp = group(pd.addAction(), "follow-up", "must");
+            triggeredStep(followUp.addAction(), "recheck", "8480-6");
+            after(followUp, "review", 30);
+
+            assertRejected(pd, "Action 'follow-up' follows group 'review'");
+        }
+
+        @Test
+        void aGroupFollowingAStepLoads() {
+            PlanDefinition pd = new PlanDefinition();
+            triggeredStep(pd.addAction(), "registration", "1");
+            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit", "must");
+            triggeredStep(visit.addAction(), "bp", "85354-9");
+            after(visit, "registration", 42);
+
+            assertDoesNotThrow(() -> parser.validateGroups(pd));
         }
 
         @Test

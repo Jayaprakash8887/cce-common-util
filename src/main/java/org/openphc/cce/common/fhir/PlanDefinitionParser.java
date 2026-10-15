@@ -13,7 +13,6 @@ import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -382,23 +381,6 @@ public class PlanDefinitionParser {
         return groups.stream().filter(g -> groupId.equals(g.parentGroupId())).toList();
     }
 
-    /**
-     * The ids of the direct members a group's completion waits on: its mandatory steps and its
-     * mandatory groups. An optional group never counts, whether or not it has started; it is tracked on
-     * its own.
-     */
-    public static Set<String> mandatoryMemberIds(String groupId, List<StepMetadata> steps,
-                                                 List<GroupMetadata> groups) {
-        Set<String> ids = new LinkedHashSet<>();
-        memberSteps(groupId, steps).stream()
-                .filter(s -> RequiredBehavior.isMandatory(s.requiredBehavior()))
-                .forEach(s -> ids.add(s.id()));
-        memberGroups(groupId, groups).stream()
-                .filter(GroupMetadata::isMandatory)
-                .forEach(g -> ids.add(g.id()));
-        return ids;
-    }
-
     /** The ids of everything inside a group, at any depth: steps and groups. */
     public static Set<String> descendantIds(String groupId, List<StepMetadata> steps,
                                             List<GroupMetadata> groups) {
@@ -609,14 +591,36 @@ public class PlanDefinitionParser {
      *
      * <p>Rules that hold until the feature behind them is built: no {@code timing} on a group (repeating
      * groups), no {@code tolerance-days} on a group (group deadlines), no {@code cycle-boundary} extension
-     * (visit-driven repeats) and no {@code fire-event} action on a group (intelligence on groups). Each is
-     * refused rather than ignored, so an author never believes a setting takes effect when it does not.
+     * (visit-driven repeats), no {@code fire-event} action on a group (intelligence on groups), and nothing
+     * that follows a group (group completion and closure). Each is refused rather than ignored, so an
+     * author never believes a setting takes effect when it does not.
      *
      * @throws IllegalArgumentException naming the first action that breaks a rule
      */
     public void validateGroups(PlanDefinition planDefinition) {
         for (PlanDefinition.PlanDefinitionActionComponent action : planDefinition.getAction()) {
             validateGroupsIn(action);
+        }
+        rejectFollowersOfGroups(planDefinition);
+    }
+
+    // Until groups can complete or close, whatever follows one would never be created.
+    private void rejectFollowersOfGroups(PlanDefinition planDefinition) {
+        List<GroupMetadata> groups = extractGroups(planDefinition);
+        if (groups.isEmpty()) {
+            return;
+        }
+        DependencyGraph graph = buildDependencyGraph(extractSteps(planDefinition), groups);
+        for (GroupMetadata group : groups) {
+            String follower = graph.successorsOf(group.id()).stream().map(d -> d.step().id()).findFirst()
+                    .or(() -> graph.groupSuccessorsOf(group.id()).stream().map(d -> d.group().id()).findFirst())
+                    .orElse(null);
+            if (follower != null) {
+                throw new IllegalArgumentException(
+                        "Action '" + follower + "' follows group '" + group.id() + "'. Group completion is "
+                                + "not supported yet, so nothing that follows a group would ever be created; "
+                                + "relate it to one of the group's steps instead.");
+            }
         }
     }
 

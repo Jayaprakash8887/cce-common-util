@@ -472,8 +472,8 @@ parses no PlanDefinitions, so it cannot tell which members exist. Added in Match
 | `due_date` | `TIMESTAMPTZ` | Yes | — | When the occurrence's first steps are due, as its predecessor, its parent or its schedule sets it — never the time of the event that happened to open it. `NULL` when none can be worked out. |
 | `sla_status` | `VARCHAR` | Yes | — | The group deadline's verdict, same values as `step_instance.sla_status`. Written only by the Step SLA Service. |
 | `opened_at` | `TIMESTAMPTZ` | **NOT NULL** | — | Clinical event time, in UTC, of whatever opened the occurrence. Matcher. A calendar-day cycle is opened by the first event of its day, so its day is `opened_at`'s date in the deployment's time zone; it is not stored separately. |
-| `completed_at` | `TIMESTAMPTZ` | Yes | — | Clinical event time, in UTC, the last mandatory member was completed. Matcher. |
-| `closed_at` | `TIMESTAMPTZ` | Yes | — | Clinical event time, in UTC, from which nothing more was expected of the occurrence. A complete occurrence is closed. Matcher. |
+| `completed_at` | `TIMESTAMPTZ` | Yes | — | Clinical event time, in UTC, the last mandatory member was completed. Matcher. Not written yet: null until group completion is built. |
+| `closed_at` | `TIMESTAMPTZ` | Yes | — | Clinical event time, in UTC, from which nothing more was expected of the occurrence. A complete occurrence is closed. Matcher. Not written yet: null until group closure is built. |
 | `created_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Record creation timestamp. |
 | `updated_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Last modification timestamp. |
 

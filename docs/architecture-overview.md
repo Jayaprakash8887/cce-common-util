@@ -155,6 +155,21 @@ how.
 
 What each threshold means for a step is the SLA transition contract, in §5.
 
+### Step groups
+
+A step can belong to a **step group**, a set of steps that belong together clinically, such as one
+antenatal-care visit. A group is its own concept, not a kind of step: each occurrence of it for an
+enrollment is a `step_group_instance` row, and `step_instance.step_group_instance_id` points a step at
+its direct group's occurrence. Every reader of `step_instance` can go on assuming that one row is one
+expected clinical event.
+
+Only the Matcher Service writes `step_group_instance` today. It opens occurrences and attaches steps to
+them, under a lock on the enrollment's `protocol_instance` row. A group is not yet recorded as complete
+or closed, and has no deadline of its own, so the Step SLA Service has nothing to judge on it; its
+`completed_at`, `closed_at` and `sla_status` stay null. A step in a group keeps its own `step_status` and
+`sla_status`, owned exactly as above. A step created with a group that has no planned due date has no due
+date either, and, as above, is never judged.
+
 ---
 
 ## 5. SLA transition contract
