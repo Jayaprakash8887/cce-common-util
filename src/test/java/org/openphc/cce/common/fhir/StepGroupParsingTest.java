@@ -12,12 +12,14 @@ import org.hl7.fhir.r4.model.PlanDefinition.ActionRelationshipType;
 import org.hl7.fhir.r4.model.PlanDefinition.ActionRequiredBehavior;
 import org.hl7.fhir.r4.model.PlanDefinition.ActionSelectionBehavior;
 import org.hl7.fhir.r4.model.PlanDefinition.PlanDefinitionActionComponent;
+import org.hl7.fhir.r4.model.StringType;
 import org.hl7.fhir.r4.model.Timing;
 import org.hl7.fhir.r4.model.TriggerDefinition;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.openphc.cce.common.enums.CycleBoundary;
 import org.openphc.cce.common.fhir.PlanDefinitionParser.GroupMetadata;
 import org.openphc.cce.common.fhir.PlanDefinitionParser.StepMetadata;
 
@@ -79,6 +81,25 @@ class StepGroupParsingTest {
                 .setPath("code")
                 .addCode(new Coding().setSystem("http://loinc.org").setCode(loincCode));
         return action;
+    }
+
+    private static PlanDefinitionActionComponent repeatingBy(PlanDefinitionActionComponent group, String code) {
+        group.addExtension(new Extension(PlanDefinitionParser.CYCLE_BOUNDARY_EXTENSION_URL, new CodeType(code)));
+        return group;
+    }
+
+    /** A visit that repeats per calendar day: check-in, then a Consultation of history and examination. */
+    private static PlanDefinition journeyProtocol(String consultationBoundary) {
+        PlanDefinition pd = new PlanDefinition();
+        PlanDefinitionActionComponent journey = repeatingBy(group(pd.addAction(), "journey", "must"), "calendar-day");
+        triggeredStep(journey.addAction(), "check-in", "1");
+        PlanDefinitionActionComponent consultation = group(journey.addAction(), "consultation", "must");
+        if (consultationBoundary != null) {
+            repeatingBy(consultation, consultationBoundary);
+        }
+        triggeredStep(consultation.addAction(), "history", "2");
+        after(triggeredStep(consultation.addAction(), "examination", "3"), "history", 0);
+        return pd;
     }
 
     private static void after(PlanDefinitionActionComponent action, String prerequisiteId, int days) {
@@ -392,12 +413,83 @@ class StepGroupParsingTest {
         }
 
         @Test
-        void theCycleBoundaryExtensionIsNotSupportedYet() {
+        void aVisitDrivenJourneyWithAnEntryStepConsultationLoads_andEachKeepsItsBoundary() {
+            PlanDefinition pd = journeyProtocol("entry-step");
+
+            assertDoesNotThrow(() -> parser.validateGroups(pd));
+            List<GroupMetadata> groups = parser.extractGroups(pd);
+            assertEquals(CycleBoundary.CALENDAR_DAY, groups.get(0).cycleBoundary());
+            assertEquals(CycleBoundary.ENTRY_STEP, groups.get(1).cycleBoundary());
+            assertTrue(groups.get(0).isVisitDriven());
+        }
+
+        @Test
+        void aGroupWithNoCycleBoundaryIsNotVisitDriven() {
+            GroupMetadata review = parser.extractGroups(reviewProtocol()).get(0);
+
+            assertNull(review.cycleBoundary());
+            assertFalse(review.isVisitDriven());
+        }
+
+        @Test
+        void anUnknownCycleBoundaryIsRejected() {
+            PlanDefinition pd = reviewProtocol();
+            repeatingBy(pd.getAction().get(0), "encounter");
+
+            assertRejected(pd, "the code 'encounter'. Supported codes: calendar-day, entry-step");
+        }
+
+        @Test
+        void aCycleBoundaryThatIsNotACodeIsRejected() {
             PlanDefinition pd = reviewProtocol();
             pd.getAction().get(0).addExtension(new Extension(
-                    PlanDefinitionParser.CYCLE_BOUNDARY_EXTENSION_URL, new CodeType("calendar-day")));
+                    PlanDefinitionParser.CYCLE_BOUNDARY_EXTENSION_URL, new StringType("calendar-day")));
 
-            assertRejected(pd, "cycle-boundary");
+            assertRejected(pd, "no valueCode");
+        }
+
+        @Test
+        void aCalendarDayGroupInsideARepeatingGroupIsRejected() {
+            assertRejected(journeyProtocol("calendar-day"),
+                    "Group 'consultation' repeats by calendar-day inside another repeating group");
+        }
+
+        @Test
+        void aOneOffGroupInsideARepeatingGroupLoads() {
+            assertDoesNotThrow(() -> parser.validateGroups(journeyProtocol(null)));
+        }
+
+        @Test
+        void theCycleBoundaryOnAPlainStepIsRejected() {
+            PlanDefinition pd = reviewProtocol();
+            repeatingBy(pd.getAction().get(0).getAction().get(0), "calendar-day");
+
+            assertRejected(pd, "Action 'vitals' declares the cycle-boundary extension but is not a step group");
+        }
+
+        @Test
+        void anEntryStepGroupWithNoEntryStepIsRejected() {
+            // Every step directly in the consultation waits on one inside its nested group.
+            PlanDefinition pd = new PlanDefinition();
+            PlanDefinitionActionComponent consultation =
+                    repeatingBy(group(pd.addAction(), "consultation", "must"), "entry-step");
+            PlanDefinitionActionComponent intake = group(consultation.addAction(), "intake", "must");
+            triggeredStep(intake.addAction(), "history", "2");
+            after(triggeredStep(consultation.addAction(), "examination", "3"), "history", 0);
+
+            assertRejected(pd, "Group 'consultation' repeats by entry-step but has no entry step");
+        }
+
+        @Test
+        void theEntryStepsOfAGroupAreItsStepsWithNoPredecessorInsideIt() {
+            PlanDefinition pd = journeyProtocol("entry-step");
+            List<StepMetadata> steps = parser.extractSteps(pd);
+            List<GroupMetadata> groups = parser.extractGroups(pd);
+
+            List<StepMetadata> entry = PlanDefinitionParser.cycleEntrySteps("consultation", steps, groups,
+                    PlanDefinitionParser.buildDependencyGraph(steps, groups));
+
+            assertEquals(List.of("history"), entry.stream().map(StepMetadata::id).toList());
         }
 
         @Test

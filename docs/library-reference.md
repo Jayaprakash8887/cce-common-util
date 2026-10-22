@@ -105,9 +105,10 @@ metadata and need no FHIR context.
 |---|---|
 | `parse(String)` | JSON → `PlanDefinition`; throws `DataFormatException` on malformed input |
 | `extractSteps(PlanDefinition)` | every step as `StepMetadata`, nested sub-steps flattened to peers; a step group is never a step, and `StepMetadata.groupId` names the step's nearest group |
-| `extractGroups(PlanDefinition)` | every step group (a `step`-typed action with `groupingBehavior: logical-group`) as `GroupMetadata` |
+| `extractGroups(PlanDefinition)` | every step group (a `step`-typed action with `groupingBehavior: logical-group`) as `GroupMetadata`, with its `cycleBoundary` (`CALENDAR_DAY`, `ENTRY_STEP`, or null for a group that doesn't repeat per visit) |
 | `buildDependencyGraph(List<StepMetadata>, List<GroupMetadata>)` | `relatedAction` edges normalized into one directed `DependencyGraph`, groups included as nodes |
 | `memberSteps`, `memberGroups`, `descendantIds`, `entryMembers` | a group's direct members, everything inside it, and the mandatory members with no predecessor inside it, which an occurrence creates when it opens |
+| `cycleEntrySteps` | the steps whose repeat opens a new cycle of an `entry-step` group: its direct steps with no predecessor inside it |
 | `classifyRelationship(String)` | a FHIR relationship code → `AFTER` / `BEFORE` / `UNORDERED` |
 | `findStep`, `computeAncestors`, `computeMustPredecessorSteps`, `mustStepIds` | graph queries used for ordering checks and backfill |
 | `findUnorderedRelationships`, `findDanglingRelatedActions` | load-time diagnostics for edges that establish no ordering |

@@ -118,6 +118,32 @@ source document expresses authoring structure, not runtime hierarchy, and every 
 trigger matching, ordering, SLA scheduling — treats a sub-step exactly like a top-level step. Action
 ids must therefore be unique across the whole document, which `validateActionIds` enforces.
 
+### Step groups
+
+A `step`-typed action with `groupingBehavior: logical-group` is a **step group**, not a step: a set of
+steps that belong together clinically, such as one visit. It is never matched to an event, so it has no
+trigger, and `extractGroups` returns it as `GroupMetadata` rather than among the steps. `visual-group`
+and `sentence-group` are presentation hints and leave the action an ordinary step.
+
+A group that repeats per visit says what starts a new cycle with a CCE extension:
+
+```json
+"extension": [{
+  "url": "http://openphc.org/fhir/StructureDefinition/cycle-boundary",
+  "valueCode": "calendar-day"
+}]
+```
+
+| `valueCode` | A new cycle starts |
+|---|---|
+| `calendar-day` | for each clinical day, in the deployment's time zone, on which the group has events |
+| `entry-step` | when one of the group's entry steps (its steps with no predecessor inside the group) is matched after it was completed in the current cycle |
+
+FHIR's `Timing.repeat` only describes calendar repetition, so it has no way to say "a new cycle each
+visit"; hence the extension. `validateGroups` rejects any other code, the extension on an action that
+is not a group, a `calendar-day` group inside another repeating group, and an `entry-step` group with
+no entry step.
+
 ---
 
 ## 4. Triggers

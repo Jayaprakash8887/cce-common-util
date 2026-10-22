@@ -4,6 +4,7 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.IParser;
 import org.hl7.fhir.r4.model.*;
 import org.openphc.cce.common.enums.PlanDefinitionActionType;
+import org.openphc.cce.common.enums.CycleBoundary;
 import org.openphc.cce.common.support.RequiredBehavior;
 import org.springframework.stereotype.Component;
 
@@ -400,6 +401,18 @@ public class PlanDefinitionParser {
     }
 
     /**
+     * The steps whose repeat opens a new cycle of an {@code entry-step} group: its direct member steps,
+     * mandatory or not, with no predecessor anywhere inside the group.
+     */
+    public static List<StepMetadata> cycleEntrySteps(String groupId, List<StepMetadata> steps,
+                                                     List<GroupMetadata> groups, DependencyGraph graph) {
+        Set<String> inside = descendantIds(groupId, steps, groups);
+        return memberSteps(groupId, steps).stream()
+                .filter(s -> graph.predecessorsOf(s.id()).stream().noneMatch(inside::contains))
+                .toList();
+    }
+
+    /**
      * The members an occurrence of a group creates when it opens: its mandatory direct members with no
      * predecessor inside the group. The rest arrive through progressive instantiation as their
      * predecessors complete, with the due dates their own {@code relatedAction} offsets give them.
@@ -587,21 +600,25 @@ public class PlanDefinitionParser {
      * least one step, directly or in a nested group, or it could never complete; only a {@code step}-typed
      * action can be a group; its {@code selectionBehavior} is absent or {@code all}, the only one with a
      * completion rule; an optional group carries no deadline, as an optional step carries none; and nor
-     * does a visit-driven ({@code cycle-boundary}) group, whose cycles have no planned due date.
+     * does a visit-driven ({@code cycle-boundary}) group, whose cycles have no planned due date. The
+     * {@code cycle-boundary} extension is only on a group, with {@code calendar-day} or {@code entry-step};
+     * a group inside a repeating group repeats only by {@code entry-step}; and an {@code entry-step} group
+     * has at least one entry step.
      *
-     * <p>Rules that hold until the feature behind them is built: no {@code timing} on a group (repeating
-     * groups), no {@code tolerance-days} on a group (group deadlines), no {@code cycle-boundary} extension
-     * (visit-driven repeats), no {@code fire-event} action on a group (intelligence on groups), and nothing
-     * that follows a group (group completion and closure). Each is refused rather than ignored, so an
-     * author never believes a setting takes effect when it does not.
+     * <p>Rules that hold until the feature behind them is built: no {@code timing} on a group (scheduled
+     * repeats), no {@code tolerance-days} on a group (group deadlines), no {@code fire-event} action on a
+     * group (intelligence on groups), and nothing that follows a group (group completion and closure).
+     * Each is refused rather than ignored, so an author never believes a setting takes effect when it does
+     * not.
      *
      * @throws IllegalArgumentException naming the first action that breaks a rule
      */
     public void validateGroups(PlanDefinition planDefinition) {
         for (PlanDefinition.PlanDefinitionActionComponent action : planDefinition.getAction()) {
-            validateGroupsIn(action);
+            validateGroupsIn(action, false);
         }
         rejectFollowersOfGroups(planDefinition);
+        rejectEntryStepGroupsWithNoEntryStep(planDefinition);
     }
 
     // Until groups can complete or close, whatever follows one would never be created.
@@ -624,7 +641,8 @@ public class PlanDefinitionParser {
         }
     }
 
-    private void validateGroupsIn(PlanDefinition.PlanDefinitionActionComponent action) {
+    private void validateGroupsIn(PlanDefinition.PlanDefinitionActionComponent action,
+                                  boolean insideRepeatingGroup) {
         if (isIntelligenceAction(action)) {
             if (hasLogicalGrouping(action)) {
                 throw new IllegalArgumentException(
@@ -634,15 +652,22 @@ public class PlanDefinitionParser {
             }
             return;
         }
-        if (isGroup(action)) {
-            validateGroup(action);
+        boolean group = isGroup(action);
+        if (group) {
+            validateGroup(action, insideRepeatingGroup);
+        } else if (action.getExtensionByUrl(CYCLE_BOUNDARY_EXTENSION_URL) != null) {
+            throw new IllegalArgumentException(
+                    "Action '" + action.getId() + "' declares the cycle-boundary extension but is not a step "
+                            + "group. Only a group (groupingBehavior 'logical-group') repeats in cycles.");
         }
+        boolean repeating = group
+                && (action.hasTiming() || action.getExtensionByUrl(CYCLE_BOUNDARY_EXTENSION_URL) != null);
         for (PlanDefinition.PlanDefinitionActionComponent nested : action.getAction()) {
-            validateGroupsIn(nested);
+            validateGroupsIn(nested, insideRepeatingGroup || repeating);
         }
     }
 
-    private void validateGroup(PlanDefinition.PlanDefinitionActionComponent group) {
+    private void validateGroup(PlanDefinition.PlanDefinitionActionComponent group, boolean insideRepeatingGroup) {
         String id = group.getId();
         if (group.hasTrigger()) {
             throw new IllegalArgumentException(
@@ -685,10 +710,9 @@ public class PlanDefinitionParser {
             throw new IllegalArgumentException(
                     "Group '" + id + "' declares a timing. Repeating groups are not supported yet.");
         }
-        if (group.getExtensionByUrl(CYCLE_BOUNDARY_EXTENSION_URL) != null) {
-            throw new IllegalArgumentException(
-                    "Group '" + id + "' declares the cycle-boundary extension. Visit-driven repeating "
-                            + "groups are not supported yet.");
+        Extension cycleBoundary = group.getExtensionByUrl(CYCLE_BOUNDARY_EXTENSION_URL);
+        if (cycleBoundary != null) {
+            validateCycleBoundary(id, cycleBoundary, insideRepeatingGroup);
         }
         for (PlanDefinition.PlanDefinitionActionComponent nested : group.getAction()) {
             if (isIntelligenceAction(nested)) {
@@ -696,6 +720,39 @@ public class PlanDefinitionParser {
                         "Group '" + id + "' has the fire-event action '" + nested.getId()
                                 + "'. Intelligence actions on a group are not supported yet; attach it "
                                 + "to one of the group's steps.");
+            }
+        }
+    }
+
+    private static void validateCycleBoundary(String groupId, Extension extension, boolean insideRepeatingGroup) {
+        String code = extension.getValue() instanceof CodeType codeType ? codeType.getCode() : null;
+        CycleBoundary boundary = CycleBoundary.fromCode(code).orElseThrow(() -> new IllegalArgumentException(
+                "Group '" + groupId + "' has the cycle-boundary extension with "
+                        + (code == null ? "no valueCode" : "the code '" + code + "'")
+                        + ". Supported codes: calendar-day, entry-step."));
+        if (insideRepeatingGroup && boundary != CycleBoundary.ENTRY_STEP) {
+            throw new IllegalArgumentException(
+                    "Group '" + groupId + "' repeats by " + boundary.code() + " inside another repeating group. "
+                            + "Every event of one visit falls on the same day, so a group inside a repeating "
+                            + "group can only repeat by entry-step.");
+        }
+    }
+
+    // An entry-step group opens a new cycle only when an entry step repeats, so it needs one.
+    private void rejectEntryStepGroupsWithNoEntryStep(PlanDefinition planDefinition) {
+        List<GroupMetadata> groups = extractGroups(planDefinition);
+        if (groups.stream().noneMatch(g -> g.cycleBoundary() == CycleBoundary.ENTRY_STEP)) {
+            return;
+        }
+        List<StepMetadata> steps = extractSteps(planDefinition);
+        DependencyGraph graph = buildDependencyGraph(steps, groups);
+        for (GroupMetadata group : groups) {
+            if (group.cycleBoundary() == CycleBoundary.ENTRY_STEP
+                    && cycleEntrySteps(group.id(), steps, groups, graph).isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Group '" + group.id() + "' repeats by entry-step but has no entry step: every step "
+                                + "directly in it waits on another step inside it, so no new cycle could ever "
+                                + "start.");
             }
         }
     }
@@ -893,6 +950,8 @@ public class PlanDefinitionParser {
                     toleranceDays,
                     requiredBehavior,
                     action.hasSelectionBehavior() ? action.getSelectionBehavior().toCode() : null,
+                    CycleBoundary.fromCode(extractCodeExtension(action, CYCLE_BOUNDARY_EXTENSION_URL))
+                            .orElse(null),
                     intelligenceActions
             ));
         } else {
@@ -1191,10 +1250,16 @@ public class PlanDefinitionParser {
             Integer toleranceDays,
             String requiredBehavior,
             String selectionBehavior,
+            CycleBoundary cycleBoundary,
             List<IntelligenceActionInfo> intelligenceActions
     ) {
         public boolean isMandatory() {
             return RequiredBehavior.isMandatory(requiredBehavior);
+        }
+
+        /** Whether the group repeats per visit, by its {@code cycle-boundary} extension. */
+        public boolean isVisitDriven() {
+            return cycleBoundary != null;
         }
     }
 
