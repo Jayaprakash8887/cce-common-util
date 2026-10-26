@@ -12,6 +12,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -292,6 +293,49 @@ public class PlanDefinitionParser {
             }
         }
         return predecessors;
+    }
+
+    /**
+     * {@link #computeMustPredecessorSteps(Collection, List, DependencyGraph)} for a protocol with step
+     * groups: a step also waits on what its enclosing groups wait on, at every level. ANC visit 2 follows
+     * registration, so a BP recorded in visit 2 has registration as a predecessor, though the BP step names
+     * none of its own.
+     */
+    public static Set<String> computeMustPredecessorSteps(Collection<String> observedStepIds,
+                                                         List<StepMetadata> steps,
+                                                         List<GroupMetadata> groups,
+                                                         DependencyGraph graph) {
+        Set<String> mustStepIds = mustStepIds(steps);
+        if (mustStepIds.isEmpty()) {
+            return Set.of();
+        }
+
+        // The group directly around each step and each nested group.
+        Map<String, String> enclosingGroupIds = new HashMap<>();
+        steps.stream().filter(s -> s.groupId() != null).forEach(s -> enclosingGroupIds.put(s.id(), s.groupId()));
+        groups.stream().filter(g -> g.parentGroupId() != null)
+                .forEach(g -> enclosingGroupIds.put(g.id(), g.parentGroupId()));
+
+        // Walk back from every observed step. A group is walked through, not collected: what counts is
+        // what it waits on.
+        Set<String> ancestors = new HashSet<>();
+        Set<String> visited = new HashSet<>(observedStepIds);
+        Deque<String> queue = new ArrayDeque<>(observedStepIds);
+        while (!queue.isEmpty()) {
+            String actionId = queue.poll();
+            String enclosingGroupId = enclosingGroupIds.get(actionId);
+            if (enclosingGroupId != null && visited.add(enclosingGroupId)) {
+                queue.add(enclosingGroupId);
+            }
+            for (String prerequisiteId : graph.predecessorsOf(actionId)) {
+                ancestors.add(prerequisiteId);
+                if (visited.add(prerequisiteId)) {
+                    queue.add(prerequisiteId);
+                }
+            }
+        }
+        ancestors.retainAll(mustStepIds);
+        return ancestors;
     }
 
     /**

@@ -331,6 +331,71 @@ class StepGroupParsingTest {
     }
 
     @Nested
+    class MandatoryPredecessors {
+
+        /**
+         * Registration and an optional leaflet; ANC visit 2 following both, holding BP, and a nested
+         * nutrition group of diet that waits on BP; a treatment after BP, outside the visit.
+         */
+        private PlanDefinition ancProtocol() {
+            PlanDefinition pd = new PlanDefinition();
+            triggeredStep(pd.addAction(), "registration", "1");
+            triggeredStep(pd.addAction(), "leaflet", "2").setRequiredBehavior(ActionRequiredBehavior.COULD);
+            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit-2", "must");
+            after(visit, "registration", 42);
+            after(visit, "leaflet", 0);
+            triggeredStep(visit.addAction(), "bp", "3");
+            PlanDefinitionActionComponent nutrition = group(visit.addAction(), "nutrition", "must");
+            after(triggeredStep(nutrition.addAction(), "diet", "4"), "bp", 0);
+            after(triggeredStep(pd.addAction(), "treatment", "5"), "bp", 0);
+            return pd;
+        }
+
+        private Set<String> mustPredecessorsOf(String observedStepId) {
+            PlanDefinition pd = ancProtocol();
+            List<StepMetadata> steps = parser.extractSteps(pd);
+            List<GroupMetadata> groups = parser.extractGroups(pd);
+            return PlanDefinitionParser.computeMustPredecessorSteps(List.of(observedStepId), steps, groups,
+                    PlanDefinitionParser.buildDependencyGraph(steps, groups));
+        }
+
+        @Test
+        void aStepWaitsOnWhatItsGroupWaitsOn() {
+            assertEquals(Set.of("registration"), mustPredecessorsOf("bp"), "the optional leaflet is not required");
+        }
+
+        @Test
+        void andOnWhatEveryEnclosingGroupWaitsOn() {
+            assertEquals(Set.of("bp", "registration"), mustPredecessorsOf("diet"));
+        }
+
+        @Test
+        void aStepOutsideTheGroup_reachesItThroughAStepInside() {
+            assertEquals(Set.of("bp", "registration"), mustPredecessorsOf("treatment"));
+        }
+
+        @Test
+        void withoutTheGroups_onlyStepEdgesAreFollowed() {
+            PlanDefinition pd = ancProtocol();
+            List<StepMetadata> steps = parser.extractSteps(pd);
+            List<GroupMetadata> groups = parser.extractGroups(pd);
+
+            assertTrue(PlanDefinitionParser.computeMustPredecessorSteps(List.of("bp"), steps,
+                    PlanDefinitionParser.buildDependencyGraph(steps, groups)).isEmpty());
+        }
+
+        @Test
+        void aProtocolWithNoMandatoryStepHasNoMandatoryPredecessors() {
+            PlanDefinition pd = new PlanDefinition();
+            triggeredStep(pd.addAction(), "a", "1").setRequiredBehavior(ActionRequiredBehavior.COULD);
+            List<StepMetadata> steps = parser.extractSteps(pd);
+
+            assertTrue(PlanDefinitionParser.computeMustPredecessorSteps(List.of("a"), steps, List.of(),
+                    PlanDefinitionParser.buildDependencyGraph(steps)).isEmpty());
+        }
+    }
+
+    @Nested
     class Validation {
 
         @Test
