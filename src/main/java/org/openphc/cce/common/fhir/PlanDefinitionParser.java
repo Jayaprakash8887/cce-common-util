@@ -61,9 +61,11 @@ public class PlanDefinitionParser {
         return flatten(planDefinition).groups();
     }
 
-    private record Flattened(List<StepMetadata> steps, List<GroupMetadata> groups) {}
+    /** A PlanDefinition's steps and step groups, from one walk of its actions. */
+    record Flattened(List<StepMetadata> steps, List<GroupMetadata> groups) {}
 
-    private Flattened flatten(PlanDefinition planDefinition) {
+    /** {@link #extractSteps} and {@link #extractGroups} at once, walking the actions a single time. */
+    Flattened flatten(PlanDefinition planDefinition) {
         List<StepMetadata> steps = new ArrayList<>();
         List<GroupMetadata> groups = new ArrayList<>();
         for (PlanDefinition.PlanDefinitionActionComponent action : planDefinition.getAction()) {
@@ -140,12 +142,6 @@ public class PlanDefinitionParser {
             Map<String, List<String>> predecessors,
             Map<String, List<GroupDependency>> groupSuccessors
     ) {
-        /** A graph with no step groups in it. */
-        public DependencyGraph(Map<String, List<StepDependency>> successors,
-                               Map<String, List<String>> predecessors) {
-            this(successors, predecessors, Map.of());
-        }
-
         public List<StepDependency> successorsOf(String actionId) {
             return successors.getOrDefault(actionId, List.of());
         }
@@ -243,63 +239,22 @@ public class PlanDefinitionParser {
     }
 
     /**
-     * Compute all transitive ancestors of a step in the dependency graph.
-     * An ancestor of X is any step X depends on, directly or transitively.
-     */
-    public static Set<String> computeAncestors(String stepId, DependencyGraph graph) {
-        Set<String> ancestors = new HashSet<>();
-        Set<String> visited = new HashSet<>();
-        Deque<String> queue = new ArrayDeque<>();
-        queue.add(stepId);
-        visited.add(stepId);
-
-        while (!queue.isEmpty()) {
-            for (String prerequisiteId : graph.predecessorsOf(queue.poll())) {
-                ancestors.add(prerequisiteId);
-                if (visited.add(prerequisiteId)) {
-                    queue.add(prerequisiteId);
-                }
-            }
-        }
-        return ancestors;
-    }
-
-    /**
      * The mandatory ("must") steps that should already have been carried out for the observed
      * progress to be legitimate: for every observed step, its transitive {@code relatedAction}
      * predecessors (ancestors) whose requiredBehavior is "must". Observed steps may appear in the
      * result when one is a predecessor of another — callers that only care about unrecorded work
      * filter by "has no step instance".
      *
+     * <p>A step also waits on what its enclosing groups wait on, at every level. ANC visit 2 follows
+     * registration, so a BP recorded in visit 2 has registration as a predecessor, though the BP step
+     * names none of its own.
+     *
      * <p>{@code StepInstanceService} materializes these when they have no step instance at all, so
      * a step that arrived without its prerequisites stops leaving them invisible. Mandatory work
      * still ahead is left to progressive instantiation, which creates it with the due dates its own
      * {@code relatedAction} offsets define.
-     */
-    public static Set<String> computeMustPredecessorSteps(Collection<String> observedStepIds,
-                                                         List<StepMetadata> steps,
-                                                         DependencyGraph graph) {
-        Set<String> mustStepIds = mustStepIds(steps);
-        if (mustStepIds.isEmpty()) {
-            return Set.of();
-        }
-
-        Set<String> predecessors = new HashSet<>();
-        for (String stepId : observedStepIds) {
-            for (String ancestorId : computeAncestors(stepId, graph)) {
-                if (mustStepIds.contains(ancestorId)) {
-                    predecessors.add(ancestorId);
-                }
-            }
-        }
-        return predecessors;
-    }
-
-    /**
-     * {@link #computeMustPredecessorSteps(Collection, List, DependencyGraph)} for a protocol with step
-     * groups: a step also waits on what its enclosing groups wait on, at every level. ANC visit 2 follows
-     * registration, so a BP recorded in visit 2 has registration as a predecessor, though the BP step names
-     * none of its own.
+     *
+     * @param groups every step group; empty for a protocol that declares none
      */
     public static Set<String> computeMustPredecessorSteps(Collection<String> observedStepIds,
                                                          List<StepMetadata> steps,
@@ -341,13 +296,8 @@ public class PlanDefinitionParser {
     /**
      * Describe every {@code relatedAction} whose relationship implies no ordering
      * ({@code concurrent-*}), so a protocol that expects one to sequence steps is reported at load
-     * time instead of quietly producing a disconnected graph.
+     * time instead of quietly producing a disconnected graph. Steps and step groups both declare edges.
      */
-    public static List<String> findUnorderedRelationships(List<StepMetadata> steps) {
-        return findUnorderedRelationships(steps, List.of());
-    }
-
-    /** {@link #findUnorderedRelationships(List)}, including the edges step groups declare. */
     public static List<String> findUnorderedRelationships(List<StepMetadata> steps, List<GroupMetadata> groups) {
         List<String> found = new ArrayList<>();
         for (Map.Entry<String, List<RelatedStepInfo>> node : declaredEdges(steps, groups).entrySet()) {
@@ -364,14 +314,7 @@ public class PlanDefinitionParser {
     /**
      * Describe every {@code relatedAction} naming an action the definition does not declare. Such an
      * edge can neither schedule a step nor be waited on, so it is silently inert — reported at load
-     * time so an authoring typo does not pass unnoticed.
-     */
-    public static List<String> findDanglingRelatedActions(List<StepMetadata> steps) {
-        return findDanglingRelatedActions(steps, List.of());
-    }
-
-    /**
-     * {@link #findDanglingRelatedActions(List)}, with step groups both declaring edges and counting as
+     * time so an authoring typo does not pass unnoticed. Step groups both declare edges and count as
      * actions an edge may name.
      */
     public static List<String> findDanglingRelatedActions(List<StepMetadata> steps, List<GroupMetadata> groups) {
@@ -509,35 +452,25 @@ public class PlanDefinitionParser {
      */
     public List<TriggerIndexEntry> buildTriggerIndexEntries(PlanDefinition planDefinition, UUID protocolDefinitionId) {
         List<TriggerIndexEntry> entries = new ArrayList<>();
-
         for (PlanDefinition.PlanDefinitionActionComponent action : planDefinition.getAction()) {
-            // Index top-level action triggers
             indexActionTriggers(action, protocolDefinitionId, entries);
-
-            // Recursively index sub-step triggers at all nesting levels
-            indexNestedSubStepTriggers(action, protocolDefinitionId, entries);
         }
         return entries;
     }
 
-    /**
-     * Recursively index sub-step triggers using each sub-step's own action ID.
-     */
-    private void indexNestedSubStepTriggers(PlanDefinition.PlanDefinitionActionComponent parentAction,
-                                            UUID protocolDefinitionId,
-                                            List<TriggerIndexEntry> entries) {
-        for (PlanDefinition.PlanDefinitionActionComponent nestedAction : parentAction.getAction()) {
+    /** Index an action's triggers under its own action id, then those of its nested step-type actions. */
+    private void indexActionTriggers(PlanDefinition.PlanDefinitionActionComponent action,
+                                     UUID protocolDefinitionId, List<TriggerIndexEntry> entries) {
+        indexOwnTriggers(action, protocolDefinitionId, entries);
+        for (PlanDefinition.PlanDefinitionActionComponent nestedAction : action.getAction()) {
             if (isStepAction(nestedAction)) {
                 indexActionTriggers(nestedAction, protocolDefinitionId, entries);
-
-                // Recurse for deeper nesting levels
-                indexNestedSubStepTriggers(nestedAction, protocolDefinitionId, entries);
             }
         }
     }
 
-    private void indexActionTriggers(PlanDefinition.PlanDefinitionActionComponent action, 
-                                     UUID protocolDefinitionId, List<TriggerIndexEntry> entries) {
+    private void indexOwnTriggers(PlanDefinition.PlanDefinitionActionComponent action,
+                                  UUID protocolDefinitionId, List<TriggerIndexEntry> entries) {
         // A group is never matched to an event, only its steps are. validateGroups refuses a group with
         // a trigger at load; skipping here keeps one that slipped through from ever being indexed.
         if (isGroup(action)) {
@@ -552,7 +485,7 @@ public class PlanDefinitionParser {
 
                 List<DataRequirement.DataRequirementCodeFilterComponent> codeFilters = dataReq.getCodeFilter();
                 if (codeFilters == null || codeFilters.isEmpty()) {
-                    entries.add(buildTriggerIndex(resourceType, "", "", "", protocolDefinitionId, actionId));
+                    entries.add(new TriggerIndexEntry(resourceType, "", "", "", protocolDefinitionId, actionId));
                     continue;
                 }
 
@@ -562,7 +495,8 @@ public class PlanDefinitionParser {
                         String system = coding.getSystem() != null ? coding.getSystem() : "";
                         String code = coding.getCode() != null ? coding.getCode()
                                 : (coding.getDisplay() != null ? coding.getDisplay() : "");
-                        entries.add(buildTriggerIndex(resourceType, path, system, code, protocolDefinitionId, actionId));
+                        entries.add(new TriggerIndexEntry(resourceType, path, system, code, protocolDefinitionId,
+                                actionId));
                     }
                 }
             }
@@ -661,17 +595,17 @@ public class PlanDefinitionParser {
         for (PlanDefinition.PlanDefinitionActionComponent action : planDefinition.getAction()) {
             validateGroupsIn(action, false);
         }
-        rejectFollowersOfGroups(planDefinition);
-        rejectEntryStepGroupsWithNoEntryStep(planDefinition);
+        Flattened flattened = flatten(planDefinition);
+        if (flattened.groups().isEmpty()) {
+            return;
+        }
+        DependencyGraph graph = buildDependencyGraph(flattened.steps(), flattened.groups());
+        rejectFollowersOfGroups(flattened.groups(), graph);
+        rejectEntryStepGroupsWithNoEntryStep(flattened.steps(), flattened.groups(), graph);
     }
 
     // Until groups can complete or close, whatever follows one would never be created.
-    private void rejectFollowersOfGroups(PlanDefinition planDefinition) {
-        List<GroupMetadata> groups = extractGroups(planDefinition);
-        if (groups.isEmpty()) {
-            return;
-        }
-        DependencyGraph graph = buildDependencyGraph(extractSteps(planDefinition), groups);
+    private static void rejectFollowersOfGroups(List<GroupMetadata> groups, DependencyGraph graph) {
         for (GroupMetadata group : groups) {
             String follower = graph.successorsOf(group.id()).stream().map(d -> d.step().id()).findFirst()
                     .or(() -> graph.groupSuccessorsOf(group.id()).stream().map(d -> d.group().id()).findFirst())
@@ -783,13 +717,8 @@ public class PlanDefinitionParser {
     }
 
     // An entry-step group opens a new cycle only when an entry step repeats, so it needs one.
-    private void rejectEntryStepGroupsWithNoEntryStep(PlanDefinition planDefinition) {
-        List<GroupMetadata> groups = extractGroups(planDefinition);
-        if (groups.stream().noneMatch(g -> g.cycleBoundary() == CycleBoundary.ENTRY_STEP)) {
-            return;
-        }
-        List<StepMetadata> steps = extractSteps(planDefinition);
-        DependencyGraph graph = buildDependencyGraph(steps, groups);
+    private static void rejectEntryStepGroupsWithNoEntryStep(List<StepMetadata> steps, List<GroupMetadata> groups,
+                                                             DependencyGraph graph) {
         for (GroupMetadata group : groups) {
             if (group.cycleBoundary() == CycleBoundary.ENTRY_STEP
                     && cycleEntrySteps(group.id(), steps, groups, graph).isEmpty()) {
@@ -1217,12 +1146,6 @@ public class PlanDefinitionParser {
         }
     }
 
-    private TriggerIndexEntry buildTriggerIndex(ResourceType resourceType, String path, String codeSystem,
-                                               String codeValue, UUID protocolDefinitionId, String actionId) {
-        return new TriggerIndexEntry(resourceType, path, codeSystem, codeValue,
-                protocolDefinitionId, actionId);
-    }
-
     /**
      * One decomposed trigger coordinate: a single (resourceType, path, codeSystem, codeValue) tuple
      * for one action of one protocol definition.
@@ -1299,11 +1222,6 @@ public class PlanDefinitionParser {
     ) {
         public boolean isMandatory() {
             return RequiredBehavior.isMandatory(requiredBehavior);
-        }
-
-        /** Whether the group repeats per visit, by its {@code cycle-boundary} extension. */
-        public boolean isVisitDriven() {
-            return cycleBoundary != null;
         }
     }
 

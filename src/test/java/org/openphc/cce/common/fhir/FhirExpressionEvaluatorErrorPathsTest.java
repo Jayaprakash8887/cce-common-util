@@ -7,12 +7,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /**
  * Error- and edge-path unit tests for {@link FhirExpressionEvaluator} — the fail-soft branches
@@ -32,7 +30,7 @@ class FhirExpressionEvaluatorErrorPathsTest {
     void setUp() {
         fhirContext = FhirContext.forR4();
         objectMapper = new ObjectMapper();
-        service = new FhirExpressionEvaluator(fhirContext, objectMapper);
+        service = new FhirExpressionEvaluator(fhirContext);
     }
 
     private JsonNode patient() {
@@ -50,17 +48,9 @@ class FhirExpressionEvaluatorErrorPathsTest {
     }
 
     @Test
-    void jsonLogic_whenEventSerializationFails_returnsFalse() {
-        // A mock ObjectMapper whose writeValueAsString fails forces toJsonObject's guard.
-        ObjectMapper failing = mock(ObjectMapper.class);
-        try {
-            when(failing.writeValueAsString(any())).thenThrow(new JsonProcessingException("boom") {});
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException(e);
-        }
-        FhirExpressionEvaluator svc = new FhirExpressionEvaluator(fhirContext, failing);
-
-        assertFalse(svc.evaluate("text/jsonlogic", "{\"==\":[1,1]}", objectMapper.valueToTree(Map.of())));
+    void jsonLogic_whenEventIsNotAJsonObject_returnsFalse() {
+        // toJsonObject reads an object; an array fails there → swallowed → false.
+        assertFalse(service.evaluate("text/jsonlogic", "{\"==\":[1,1]}", objectMapper.valueToTree(List.of(1))));
     }
 
     @Test

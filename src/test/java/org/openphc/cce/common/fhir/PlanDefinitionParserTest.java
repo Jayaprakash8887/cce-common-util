@@ -1369,9 +1369,7 @@ class PlanDefinitionParserTest {
                         step("b")));
 
         assertTrue(graph.successors().isEmpty(), "neither edge orders anything");
-        assertTrue(graph.predecessors().isEmpty());
-        assertTrue(PlanDefinitionParser.computeAncestors("a", graph).isEmpty(),
-                "a dangling prerequisite is not an ancestor — there is no such step");
+        assertTrue(graph.predecessors().isEmpty(), "a dangling prerequisite is not one — there is no such step");
     }
 
     @Test
@@ -1380,11 +1378,11 @@ class PlanDefinitionParserTest {
                 List.of(step("a", edge("b", "concurrent", "0"), edge("ghost", "after-end", "0")),
                         step("b"));
 
-        List<String> unordered = PlanDefinitionParser.findUnorderedRelationships(steps);
+        List<String> unordered = PlanDefinitionParser.findUnorderedRelationships(steps, List.of());
         assertEquals(1, unordered.size());
         assertTrue(unordered.get(0).contains("concurrent"), unordered.get(0));
 
-        List<String> dangling = PlanDefinitionParser.findDanglingRelatedActions(steps);
+        List<String> dangling = PlanDefinitionParser.findDanglingRelatedActions(steps, List.of());
         assertEquals(1, dangling.size());
         assertTrue(dangling.get(0).contains("ghost"), dangling.get(0));
     }
@@ -1399,7 +1397,7 @@ class PlanDefinitionParserTest {
         // Only `treatment` was recorded: every mandatory action on the path to it is already late,
         // which is what the backfill materializes as PENDING.
         java.util.Set<String> predecessors =
-                PlanDefinitionParser.computeMustPredecessorSteps(List.of("treatment"), steps,
+                PlanDefinitionParser.computeMustPredecessorSteps(List.of("treatment"), steps, List.of(),
                         PlanDefinitionParser.buildDependencyGraph(steps));
 
         assertEquals(java.util.Set.of("visit-encounter", "vitals-recording", "consultation",
@@ -1419,7 +1417,7 @@ class PlanDefinitionParserTest {
         // mandatory sub-steps of the same nesting group but still ahead in the forward chain, so
         // they are left to progressive instantiation and its relatedAction offsets.
         java.util.Set<String> predecessors =
-                PlanDefinitionParser.computeMustPredecessorSteps(List.of("chief-complaints"), steps,
+                PlanDefinitionParser.computeMustPredecessorSteps(List.of("chief-complaints"), steps, List.of(),
                         PlanDefinitionParser.buildDependencyGraph(steps));
 
         assertEquals(java.util.Set.of("visit-encounter", "vitals-recording", "consultation"),

@@ -77,16 +77,9 @@ public class IntelligenceActionEvaluator {
         JsonNode context = objectMapper.valueToTree(buildDeviationContext(step, deviation));
         String triggerReason = deviation.getDeviationType().name().toLowerCase();
 
-        List<IntelligenceEventLog> eventLogs = new ArrayList<>();
-
         // A deviation is raised by the scheduler crossing a deadline, not by an inbound event, so
         // there is no event payload to attach.
-        for (PlanDefinitionParser.IntelligenceActionInfo intelligenceAction : findIntelligenceActions(step)) {
-            IntelligenceEventLog eventLog = evaluateAction(intelligenceAction, step, deviation, context, triggerReason, null);
-            if (eventLog != null) {
-                eventLogs.add(eventLog);
-            }
-        }
+        List<IntelligenceEventLog> eventLogs = evaluateActions(step, deviation, context, triggerReason, null);
 
         if (!eventLogs.isEmpty()) {
             log.info("Evaluated intelligence actions for deviation: stepId={}, deviationType={}, fired={}",
@@ -106,14 +99,7 @@ public class IntelligenceActionEvaluator {
     public List<IntelligenceEventLog> evaluateOnCompletion(StepInstance step, JsonNode eventPayload) {
         JsonNode context = objectMapper.valueToTree(buildCompletionContext(step));
 
-        List<IntelligenceEventLog> eventLogs = new ArrayList<>();
-
-        for (PlanDefinitionParser.IntelligenceActionInfo intelligenceAction : findIntelligenceActions(step)) {
-            IntelligenceEventLog eventLog = evaluateAction(intelligenceAction, step, null, context, "completion", eventPayload);
-            if (eventLog != null) {
-                eventLogs.add(eventLog);
-            }
-        }
+        List<IntelligenceEventLog> eventLogs = evaluateActions(step, null, context, "completion", eventPayload);
 
         if (!eventLogs.isEmpty()) {
             log.info("Evaluated intelligence actions for step completion: stepId={}, fired={}",
@@ -142,6 +128,20 @@ public class IntelligenceActionEvaluator {
     }
 
     // ── Per intelligence action evaluation ──
+
+    /** Evaluate each of the step's intelligence actions, returning the event logs of those that fired. */
+    private List<IntelligenceEventLog> evaluateActions(StepInstance step, Deviation deviation, JsonNode context,
+                                                       String triggerReason, JsonNode eventPayload) {
+        List<IntelligenceEventLog> eventLogs = new ArrayList<>();
+        for (PlanDefinitionParser.IntelligenceActionInfo intelligenceAction : findIntelligenceActions(step)) {
+            IntelligenceEventLog eventLog = evaluateAction(intelligenceAction, step, deviation, context,
+                    triggerReason, eventPayload);
+            if (eventLog != null) {
+                eventLogs.add(eventLog);
+            }
+        }
+        return eventLogs;
+    }
 
     private IntelligenceEventLog evaluateAction(PlanDefinitionParser.IntelligenceActionInfo action,
                                      StepInstance step, Deviation deviation,
@@ -274,15 +274,21 @@ public class IntelligenceActionEvaluator {
     // ── Context builders ──
 
 
-    private Map<String, Object> buildDeviationContext(StepInstance step, Deviation deviation) {
+    /** What every rule context carries about the step. */
+    private static Map<String, Object> baseContext(StepInstance step) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("stepStatus", step.getStepStatus().code());
         // Null when no threshold has fallen due. A JSONLogic rule comparing slaStatus to a string
         // simply does not match, which is the right outcome: there is no judgement to react to.
         context.put("slaStatus", slaStatusCode(step));
-        context.put("deviationType", deviation.getDeviationType().name().toLowerCase());
         context.put("actionId", step.getActionId());
         context.put("repeatIndex", step.getRepeatIndex());
+        return context;
+    }
+
+    private Map<String, Object> buildDeviationContext(StepInstance step, Deviation deviation) {
+        Map<String, Object> context = baseContext(step);
+        context.put("deviationType", deviation.getDeviationType().name().toLowerCase());
 
         SlaThresholdReader.SlaThresholds thresholds = slaThresholdReader.getThresholds(step.getId());
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
@@ -302,13 +308,7 @@ public class IntelligenceActionEvaluator {
     }
 
     private Map<String, Object> buildCompletionContext(StepInstance step) {
-        Map<String, Object> context = new LinkedHashMap<>();
-        context.put("stepStatus", step.getStepStatus().code());
-        // Null when no threshold has fallen due. A JSONLogic rule comparing slaStatus to a string
-        // simply does not match, which is the right outcome: there is no judgement to react to.
-        context.put("slaStatus", slaStatusCode(step));
-        context.put("actionId", step.getActionId());
-        context.put("repeatIndex", step.getRepeatIndex());
+        Map<String, Object> context = baseContext(step);
 
         if (step.getCompletedAt() != null) {
             context.put("completedAt", step.getCompletedAt().toString());

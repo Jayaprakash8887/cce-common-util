@@ -29,7 +29,8 @@ class ParsedProtocolCacheTest {
     private void stubParse(PlanDefinitionParser.StepMetadata... steps) {
         PlanDefinition planDefinition = new PlanDefinition();
         when(planDefinitionParser.parse(anyString())).thenReturn(planDefinition);
-        when(planDefinitionParser.extractSteps(planDefinition)).thenReturn(List.of(steps));
+        when(planDefinitionParser.flatten(planDefinition))
+                .thenReturn(new PlanDefinitionParser.Flattened(List.of(steps), List.of()));
     }
 
     @Test

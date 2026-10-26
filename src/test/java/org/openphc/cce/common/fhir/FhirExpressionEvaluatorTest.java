@@ -22,7 +22,7 @@ class FhirExpressionEvaluatorTest {
         FhirContext fhirContext = FhirContext.forR4();
         objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
-        service = new FhirExpressionEvaluator(fhirContext, objectMapper);
+        service = new FhirExpressionEvaluator(fhirContext);
     }
 
     private JsonNode toJsonNode(Object obj) {

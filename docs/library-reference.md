@@ -110,7 +110,7 @@ metadata and need no FHIR context.
 | `memberSteps`, `memberGroups`, `descendantIds`, `entryMembers` | a group's direct members, everything inside it, and the mandatory members with no predecessor inside it, which an occurrence creates when it opens |
 | `cycleEntrySteps` | the steps whose repeat opens a new cycle of an `entry-step` group: its direct steps with no predecessor inside it |
 | `classifyRelationship(String)` | a FHIR relationship code → `AFTER` / `BEFORE` / `UNORDERED` |
-| `findStep`, `computeAncestors`, `computeMustPredecessorSteps`, `mustStepIds` | graph queries used for ordering checks and backfill. `computeMustPredecessorSteps` with the groups also follows what a step's enclosing groups wait on, so a step in ANC visit 2 has registration as a predecessor when the visit follows registration |
+| `findStep`, `computeMustPredecessorSteps`, `mustStepIds` | graph queries used for ordering checks and backfill. `computeMustPredecessorSteps` also follows what a step's enclosing groups wait on, so a step in ANC visit 2 has registration as a predecessor when the visit follows registration |
 | `findUnorderedRelationships`, `findDanglingRelatedActions` | load-time diagnostics for edges that establish no ordering |
 | `buildTriggerIndexEntries(PlanDefinition, UUID)` | the trigger index rows for a definition, as persistence-agnostic `TriggerIndexEntry` records |
 | `extractConditionOnlyTriggers(PlanDefinition)` | triggers with a condition but no `data[]`, evaluated in memory |

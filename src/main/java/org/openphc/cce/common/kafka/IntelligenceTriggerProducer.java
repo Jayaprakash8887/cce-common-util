@@ -75,13 +75,13 @@ public class IntelligenceTriggerProducer {
     }
 
     /**
-     * Publish an intelligence trigger event to Kafka.
-     * Asynchronous: logs failures but does not throw, so the main transaction is not affected.
+     * Publish an intelligence trigger event to Kafka without waiting; {@link #publishAndConfirm} waits.
+     * Logs failures but does not throw.
      *
      * @param event the intelligence trigger event
      * @return a CompletableFuture with the send result
      */
-    public CompletableFuture<SendResult<String, Object>> publish(IntelligenceTriggerEvent event) {
+    CompletableFuture<SendResult<String, Object>> publish(IntelligenceTriggerEvent event) {
         String key = event.getIntelligenceEventId().toString();
 
         Timer.Sample sample = Timer.start();

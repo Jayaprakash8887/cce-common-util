@@ -15,8 +15,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.StringReader;
 import java.util.List;
@@ -33,13 +31,11 @@ public class FhirExpressionEvaluator {
     private final JohnzonJsonLogic jsonLogic;
     private final IFhirPath fhirPath;
     private final IParser fhirJsonParser;
-    private final ObjectMapper objectMapper;
     private final ConcurrentHashMap<String, JsonValue> jsonLogicRuleCache = new ConcurrentHashMap<>();
 
-    public FhirExpressionEvaluator(FhirContext fhirContext, ObjectMapper objectMapper) {
+    public FhirExpressionEvaluator(FhirContext fhirContext) {
         this.fhirPath = fhirContext.newFhirPath();
         this.fhirJsonParser = fhirContext.newJsonParser();
-        this.objectMapper = objectMapper;
         this.jsonLogic = new JohnzonJsonLogic();
     }
 
@@ -115,13 +111,7 @@ public class FhirExpressionEvaluator {
     }
 
     private JsonObject toJsonObject(JsonNode eventData) {
-        String json;
-        try {
-            json = objectMapper.writeValueAsString(eventData);
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Failed to serialize event data to JSON", e);
-        }
-        try (JsonReader reader = Json.createReader(new StringReader(json))) {
+        try (JsonReader reader = Json.createReader(new StringReader(eventData.toString()))) {
             return reader.readObject();
         }
     }

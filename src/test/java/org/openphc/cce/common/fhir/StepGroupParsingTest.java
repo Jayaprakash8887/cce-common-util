@@ -375,16 +375,6 @@ class StepGroupParsingTest {
         }
 
         @Test
-        void withoutTheGroups_onlyStepEdgesAreFollowed() {
-            PlanDefinition pd = ancProtocol();
-            List<StepMetadata> steps = parser.extractSteps(pd);
-            List<GroupMetadata> groups = parser.extractGroups(pd);
-
-            assertTrue(PlanDefinitionParser.computeMustPredecessorSteps(List.of("bp"), steps,
-                    PlanDefinitionParser.buildDependencyGraph(steps, groups)).isEmpty());
-        }
-
-        @Test
         void aProtocolWithNoMandatoryStepHasNoMandatoryPredecessors() {
             PlanDefinition pd = new PlanDefinition();
             triggeredStep(pd.addAction(), "a", "1").setRequiredBehavior(ActionRequiredBehavior.COULD);
@@ -485,15 +475,13 @@ class StepGroupParsingTest {
             List<GroupMetadata> groups = parser.extractGroups(pd);
             assertEquals(CycleBoundary.CALENDAR_DAY, groups.get(0).cycleBoundary());
             assertEquals(CycleBoundary.ENTRY_STEP, groups.get(1).cycleBoundary());
-            assertTrue(groups.get(0).isVisitDriven());
         }
 
         @Test
-        void aGroupWithNoCycleBoundaryIsNotVisitDriven() {
+        void aGroupWithNoCycleBoundaryHasNone() {
             GroupMetadata review = parser.extractGroups(reviewProtocol()).get(0);
 
             assertNull(review.cycleBoundary());
-            assertFalse(review.isVisitDriven());
         }
 
         @Test

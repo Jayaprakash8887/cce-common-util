@@ -1,6 +1,5 @@
 package org.openphc.cce.common.fhir;
 
-import org.hl7.fhir.r4.model.PlanDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -86,8 +85,7 @@ public class ParsedProtocolCache {
      * @param definitionJson       supplies the stored FHIR PlanDefinition JSON, called only on a miss
      */
     public ParsedProtocol get(UUID protocolDefinitionId, java.util.function.Supplier<String> definitionJson) {
-        UUID id = protocolDefinitionId;
-        ParsedProtocol cached = cache.get(id);
+        ParsedProtocol cached = cache.get(protocolDefinitionId);
         if (cached != null) {
             return cached;
         }
@@ -100,7 +98,7 @@ public class ParsedProtocolCache {
             cache.clear();
         }
 
-        return cache.computeIfAbsent(id, key -> parse(definitionJson.get()));
+        return cache.computeIfAbsent(protocolDefinitionId, key -> parse(definitionJson.get()));
     }
 
     /** Drop a protocol's derived form, so the next read re-derives it from the stored JSONB. */
@@ -111,9 +109,8 @@ public class ParsedProtocolCache {
     }
 
     private ParsedProtocol parse(String definitionJson) {
-        PlanDefinition planDefinition = planDefinitionParser.parse(definitionJson);
-        List<PlanDefinitionParser.StepMetadata> steps = planDefinitionParser.extractSteps(planDefinition);
-        List<PlanDefinitionParser.GroupMetadata> groups = planDefinitionParser.extractGroups(planDefinition);
-        return new ParsedProtocol(steps, PlanDefinitionParser.buildDependencyGraph(steps, groups), groups);
+        PlanDefinitionParser.Flattened flattened = planDefinitionParser.flatten(planDefinitionParser.parse(definitionJson));
+        return new ParsedProtocol(flattened.steps(),
+                PlanDefinitionParser.buildDependencyGraph(flattened.steps(), flattened.groups()), flattened.groups());
     }
 }
