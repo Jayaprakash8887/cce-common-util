@@ -22,7 +22,7 @@ public interface ProtocolInstanceRepository extends JpaRepository<ProtocolInstan
 
     /**
      * Lock an enrollment's row until the transaction ends. Step group decisions — opening an
-     * occurrence, deciding it is complete — take it first, so two events for one patient processed at
+     * instance, deciding it is complete — take it first, so two events for one patient processed at
      * once cannot each miss the other's step and leave a group never completed or opened twice.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)

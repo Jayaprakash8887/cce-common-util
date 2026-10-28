@@ -34,7 +34,7 @@ For which service *creates* and which service *writes* each table, see
 4. [protocol_definition](#4-protocol_definition)
 5. [protocol_instance](#5-protocol_instance)
 6. [step_instance](#6-step_instance)
-   - [step_group_instance](#step-group-occurrences-step_group_instance)
+   - [step_group_instance](#step-group-instances-step_group_instance)
 7. [step_sla_state_transition](#7-step_sla_state_transition)
 8. [deviation](#8-deviation)
 9. [trigger_index](#9-trigger_index)
@@ -251,7 +251,7 @@ erDiagram
 | 1 | `protocol_definition` | FHIR R4 PlanDefinition resources (protocol templates) | Low (tens) |
 | 2 | `protocol_instance` | Patient enrolments in specific protocols | Medium (per-patient) |
 | 3 | `step_instance` | Individual action steps within a patient's protocol journey | Medium–High |
-| 4 | `step_group_instance` | One occurrence of a step group per enrolment, and per cycle of a repeating group | Medium (per group occurrence) |
+| 4 | `step_group_instance` | One instance of a step group per enrolment, and per cycle of a repeating group | Medium (per group instance) |
 | 5 | `step_sla_state_transition` | Each step's SLA schedule — one row per verdict to be reached | Medium–High |
 | 6 | `deviation` | Recorded protocol deviations | Medium |
 | 7 | `trigger_index` | Inverted index for fast Tier 1 structural event matching | Low (per protocol load) |
@@ -430,7 +430,7 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | `id` | `UUID` | **NOT NULL** | — (app-generated) | Primary key. Time-ordered **UUID v7** assigned by the application (`UuidV7Generator`); rows sort by creation time, giving index locality on insert. |
 | `protocol_instance_id` | `UUID` | **NOT NULL** | — | Foreign key → `protocol_instance.id`. |
 | `action_id` | `VARCHAR` | **NOT NULL** | — | Protocol definition `action.id` this step instantiates (e.g., `anc-visit-1`). Must be unique within a PlanDefinition. |
-| `step_group_instance_id` | `UUID` | Yes | — | Foreign key → `step_group_instance.id`: the occurrence of the step's nearest step group. Set when the step is created and never changed. `NULL` for a step outside any group. Added in Matcher V8. |
+| `step_group_instance_id` | `UUID` | Yes | — | Foreign key → `step_group_instance.id`: the instance of the step's nearest step group. Set when the step is created and never changed. `NULL` for a step outside any group. Added in Matcher V8. |
 | `repeat_index` | `INTEGER` | **NOT NULL** | `0` | Zero-based occurrence counter for repeating actions. Non-repeating actions always have index 0. |
 | `step_status` | `VARCHAR` | **NOT NULL** | — | Whether the expected event has been received. See [StepStatus](#stepstatus). |
 | `sla_status` | `VARCHAR` | Yes | — | Whether the deadline has been met. Null until it has been judged — see [SlaStatus](#slastatus). |
@@ -474,17 +474,17 @@ Tracks an **individual action occurrence** within a patient's protocol journey. 
 | Partial B-tree | `idx_step_instance_not_started` | `(protocol_instance_id, action_id) WHERE step_status = 'NOT_STARTED'` — locating the step a late-arriving event should complete. |
 | *(dropped in V3)* | `idx_step_instance_completed_unjudged` | Covered the on-time sweep that settled `MET` by scanning this table. `MET` is now a scheduled row like every other verdict, so the sweep and its index are gone — see [`step_sla_state_transition`](#7-step_sla_state_transition). |
 | Foreign Key | `step_instance_step_group_instance_id_fkey` | `step_group_instance_id` → `step_group_instance(id)` |
-| Partial B-tree | `idx_step_instance_group` | `step_group_instance_id WHERE step_group_instance_id IS NOT NULL` — the steps of one occurrence. Sparse: most steps are not in a group. |
+| Partial B-tree | `idx_step_instance_group` | `step_group_instance_id WHERE step_group_instance_id IS NOT NULL` — the steps of one instance. Sparse: most steps are not in a group. |
 
-### Step group occurrences (`step_group_instance`)
+### Step group instances (`step_group_instance`)
 
 A **step group** is a set of steps that belong together clinically, such as one ANC visit. In the
 PlanDefinition it is a `step`-typed action with `groupingBehavior: logical-group`; it has no trigger
-and is never matched, only its steps are. Each occurrence of a group for an enrollment is one row
-here, and a repeating group has one row per cycle. A nested group's occurrence points to its parent's;
-each step points to its direct group's occurrence through `step_instance.step_group_instance_id`.
+and is never matched, only its steps are. Each instance of a group for an enrollment is one row
+here, and a repeating group has one row per cycle. A nested group's instance points to its parent's;
+each step points to its direct group's instance through `step_instance.step_group_instance_id`.
 
-Only facts are stored. Whether an occurrence is "partly done" is worked out from its steps when it is
+Only facts are stored. Whether a group instance is "partly done" is worked out from its steps when it is
 needed. `completed_at` is stored because the Step SLA Service judges a group deadline from it and
 parses no PlanDefinitions, so it cannot tell which members exist. Added in Matcher V8.
 
@@ -492,14 +492,14 @@ parses no PlanDefinitions, so it cannot tell which members exist. Added in Match
 |--------|-----------|----------|---------|-------------|
 | `id` | `UUID` | **NOT NULL** | — (app-generated) | Primary key, UUID v7. |
 | `protocol_instance_id` | `UUID` | **NOT NULL** | — | Foreign key → `protocol_instance.id`. |
-| `parent_group_instance_id` | `UUID` | Yes | — | Foreign key → `step_group_instance.id`: the enclosing group's occurrence. `NULL` for a top-level group. |
+| `parent_group_instance_id` | `UUID` | Yes | — | Foreign key → `step_group_instance.id`: the enclosing group's instance. `NULL` for a top-level group. |
 | `group_action_id` | `VARCHAR` | **NOT NULL** | — | The group's `action.id` in the PlanDefinition. |
 | `cycle_index` | `INTEGER` | **NOT NULL** | `0` | Which repeat of the group this row is, 0-based, in the order the cycles were opened. 0 for a group that doesn't repeat. |
-| `due_date` | `TIMESTAMPTZ` | Yes | — | When the occurrence's first steps are due, as its predecessor, its parent or its schedule sets it — never the time of the event that happened to open it. `NULL` when none can be worked out. |
+| `due_date` | `TIMESTAMPTZ` | Yes | — | When the instance's first steps are due, as its predecessor, its parent or its schedule sets it — never the time of the event that happened to open it. `NULL` when none can be worked out. |
 | `sla_status` | `VARCHAR` | Yes | — | The group deadline's verdict, same values as `step_instance.sla_status`. Written only by the Step SLA Service. |
-| `opened_at` | `TIMESTAMPTZ` | **NOT NULL** | — | Clinical event time, in UTC, of whatever opened the occurrence. Matcher. A calendar-day cycle is opened by the first event of its day, so its day is `opened_at`'s date in the deployment's time zone; it is not stored separately. |
+| `opened_at` | `TIMESTAMPTZ` | **NOT NULL** | — | Clinical event time, in UTC, of whatever opened the instance. Matcher. A calendar-day cycle is opened by the first event of its day, so its day is `opened_at`'s date in the deployment's time zone; it is not stored separately. |
 | `completed_at` | `TIMESTAMPTZ` | Yes | — | Clinical event time, in UTC, the last mandatory member was completed. Matcher. Not written yet: null until group completion is built. |
-| `closed_at` | `TIMESTAMPTZ` | Yes | — | Clinical event time, in UTC, from which nothing more was expected of the occurrence. A complete occurrence is closed. Matcher. Not written yet: null until group closure is built. |
+| `closed_at` | `TIMESTAMPTZ` | Yes | — | Clinical event time, in UTC, from which nothing more was expected of the instance. A complete instance is closed. Matcher. Not written yet: null until group closure is built. |
 | `created_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Record creation timestamp. |
 | `updated_at` | `TIMESTAMPTZ` | **NOT NULL** | `now()` | Last modification timestamp. |
 
@@ -509,8 +509,8 @@ parses no PlanDefinitions, so it cannot tell which members exist. Added in Match
 | Foreign Key | `step_group_instance_protocol_instance_id_fkey` | `protocol_instance_id` → `protocol_instance(id)` |
 | Foreign Key | `step_group_instance_parent_group_instance_id_fkey` | `parent_group_instance_id` → `step_group_instance(id)` |
 | Check | `step_group_instance_sla_status_check` | `sla_status IN ('OVERDUE', 'MISSED', 'MET')` |
-| Unique | `step_group_instance_cycle_key` | `(protocol_instance_id, group_action_id, parent_group_instance_id, cycle_index)` with `NULLS NOT DISTINCT` — one row per group, parent occurrence and cycle. Without `NULLS NOT DISTINCT`, two top-level rows (null parent) would not count as duplicates. Its leading column serves lookups by enrollment. One calendar-day cycle per day has no index: the day depends on the deployment's time zone, so it is held by the enrollment lock every group decision takes. |
-| Partial B-tree | `idx_step_group_instance_parent` | `parent_group_instance_id WHERE parent_group_instance_id IS NOT NULL` — the occurrences inside one occurrence. |
+| Unique | `step_group_instance_cycle_key` | `(protocol_instance_id, group_action_id, parent_group_instance_id, cycle_index)` with `NULLS NOT DISTINCT` — one row per group, parent instance and cycle. Without `NULLS NOT DISTINCT`, two top-level rows (null parent) would not count as duplicates. Its leading column serves lookups by enrollment. One calendar-day cycle per day has no index: the day depends on the deployment's time zone, so it is held by the enrollment lock every group decision takes. |
+| Partial B-tree | `idx_step_group_instance_parent` | `parent_group_instance_id WHERE parent_group_instance_id IS NOT NULL` — the group instances nested in one group instance. |
 
 ### Status Machines
 
@@ -652,7 +652,7 @@ A step has **at most one deviation per type** — enforced by the `deviation_ste
 | Unique | `deviation_step_type_key` | `(step_instance_id, deviation_type)` — At most one deviation per type per step. The only enforcement: `DeviationRecorder` does not pre-check. Note it permits one `OVERDUE` **and** one `MISSED` row per step, so a step that goes overdue and is later missed yields two deviations. |
 | Check | — | `deviation_type IN ('OVERDUE', 'MISSED', 'ORDER_VIOLATION')` |
 | Check | `deviation_one_target` | `num_nonnulls(step_instance_id, step_group_instance_id) = 1` |
-| Unique (partial) | `deviation_group_type_key` | `(step_group_instance_id, deviation_type) WHERE step_group_instance_id IS NOT NULL` — at most one deviation per type per group occurrence. |
+| Unique (partial) | `deviation_group_type_key` | `(step_group_instance_id, deviation_type) WHERE step_group_instance_id IS NOT NULL` — at most one deviation per type per group instance. |
 
 ---
 
@@ -761,7 +761,7 @@ Records each execution of an **intelligence action** (`PlanDefinition.action.act
 | `action_definition_id` | `UUID` | **NOT NULL** | — | ActionDefinition that was resolved and triggered. Plain UUID (no FK constraint). |
 | `protocol_instance_id` | `UUID` | **NOT NULL** | — | The patient's protocol journey. Plain UUID (no FK constraint). |
 | `step_instance_id` | `UUID` | Yes | — | The step that triggered the action. `NULL` for protocol-level actions. |
-| `step_group_instance_id` | `UUID` | Yes | — | The group occurrence that triggered the action. Plain UUID (no FK constraint). Added in Matcher V8. |
+| `step_group_instance_id` | `UUID` | Yes | — | The group instance that triggered the action. Plain UUID (no FK constraint). Added in Matcher V8. |
 | `deviation_id` | `UUID` | Yes | — | The deviation that triggered the action. `NULL` for completion-triggered actions. |
 | `subject` | `VARCHAR` | **NOT NULL** | — | Patient identifier (UPID). Denormalized for direct queries. |
 | `action_type` | `VARCHAR` | **NOT NULL** | — | FHIR `ActivityDefinition.kind` (e.g., `CommunicationRequest`, `Task`, `ServiceRequest`). |
@@ -1008,9 +1008,9 @@ The `intelligence_destination` field on `intelligence_event_log` is a **free-for
 | `protocol_instance` | `step_instance` | `protocol_instance_id` | No cascade | Steps are loaded and written through their own repository; there is no JPA cascade from the parent. |
 | `step_instance` | `deviation` | `step_instance_id` | No cascade (DB level) | Reference only; not cascade-deleted. |
 | `step_instance` | `step_sla_state_transition` | `step_instance_id` | No cascade | One row per scheduled SLA threshold; retained after processing as the transition record. |
-| `protocol_instance` | `step_group_instance` | `protocol_instance_id` | No cascade | One row per occurrence of a step group. |
-| `step_group_instance` | `step_group_instance` | `parent_group_instance_id` | No cascade | A nested group's occurrence points to its parent's. |
-| `step_group_instance` | `step_instance` | `step_group_instance_id` | No cascade | A step points to its direct group's occurrence. |
+| `protocol_instance` | `step_group_instance` | `protocol_instance_id` | No cascade | One row per instance of a step group. |
+| `step_group_instance` | `step_group_instance` | `parent_group_instance_id` | No cascade | A nested group's instance points to its parent's. |
+| `step_group_instance` | `step_instance` | `step_group_instance_id` | No cascade | A step points to its direct group's instance. |
 | `step_group_instance` | `step_sla_state_transition`, `deviation` | `step_group_instance_id` | No cascade | A group's own deadline rows and deviations. |
 | `matcher_event_log` | `step_instance` | `matched_event_id` | No cascade | Links completed step to triggering event. |
 | `action_definition` | `intelligence_event_log` | `action_definition_id` | No FK constraint | Plain UUID; delete guard in application code. |

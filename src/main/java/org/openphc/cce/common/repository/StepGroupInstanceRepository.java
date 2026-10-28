@@ -10,6 +10,6 @@ import java.util.UUID;
 @Repository
 public interface StepGroupInstanceRepository extends JpaRepository<StepGroupInstance, UUID> {
 
-    /** Every occurrence of one group in an enrollment, in any cycle and under any parent. */
+    /** Every instance of one group in an enrollment, in any cycle and under any parent. */
     List<StepGroupInstance> findByProtocolInstanceIdAndGroupActionId(UUID protocolInstanceId, String groupActionId);
 }

@@ -31,7 +31,7 @@ public class StepInstance {
     private String actionId;
 
     /**
-     * The occurrence of this step's nearest step group, or null for a step outside any group. Set when
+     * The instance of this step's nearest step group, or null for a step outside any group. Set when
      * the step is created and never changed.
      */
     @ManyToOne(fetch = FetchType.LAZY)

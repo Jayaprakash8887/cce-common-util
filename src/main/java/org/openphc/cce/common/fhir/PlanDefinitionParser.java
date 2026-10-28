@@ -400,7 +400,7 @@ public class PlanDefinitionParser {
     }
 
     /**
-     * The members an occurrence of a group creates when it opens: its mandatory direct members with no
+     * The members an instance of a group creates when it opens: its mandatory direct members with no
      * predecessor inside the group. The rest arrive through progressive instantiation as their
      * predecessors complete, with the due dates their own {@code relatedAction} offsets give them.
      * Creating them all at once would give, say, a day-3 lab the day-0 vitals' due date.
@@ -1235,7 +1235,7 @@ public class PlanDefinitionParser {
     ) {}
 
     /**
-     * What an occurrence of a group creates when it opens.
+     * What an instance of a group creates when it opens.
      *
      * @param steps  the mandatory member steps to create
      * @param groups the mandatory member groups to open

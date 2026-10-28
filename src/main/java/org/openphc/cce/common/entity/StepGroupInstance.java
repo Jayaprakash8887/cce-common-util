@@ -10,13 +10,13 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
- * One occurrence of a step group for one enrollment: the steps of a group that happen together, such
+ * One instance of a step group for one enrollment: the steps of a group that happen together, such
  * as one ANC visit. A repeating group has one row per cycle.
  *
- * <p>Groups form a tree: a nested group's occurrence points to its parent's occurrence, and each step
- * row points to its direct group's occurrence through {@code step_instance.step_group_instance_id}.
+ * <p>Groups form a tree: a nested group's instance points to its parent's instance, and each step
+ * row points to its direct group's instance through {@code step_instance.step_group_instance_id}.
  *
- * <p>Only facts are stored. Whether an occurrence is "partly done" is calculated from its steps when
+ * <p>Only facts are stored. Whether a group instance is "partly done" is calculated from its steps when
  * needed; {@code completed_at} is stored because the Step SLA Service judges a group deadline from it
  * and parses no PlanDefinitions, so it cannot tell which members exist.
  */
@@ -39,7 +39,7 @@ public class StepGroupInstance {
     @JoinColumn(name = "protocol_instance_id", nullable = false)
     private ProtocolInstance protocolInstance;
 
-    /** The enclosing group's occurrence, or null for a top-level group. */
+    /** The enclosing group's instance, or null for a top-level group. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_group_instance_id")
     private StepGroupInstance parentGroupInstance;
@@ -54,7 +54,7 @@ public class StepGroupInstance {
     private int cycleIndex = 0;
 
     /**
-     * When the occurrence's entry steps are due, as its predecessor, its parent or its schedule sets it.
+     * When the instance's entry steps are due, as its predecessor, its parent or its schedule sets it.
      * Never the time of the event that happened to open it. Null when no planned due date can be worked
      * out.
      */
@@ -67,7 +67,7 @@ public class StepGroupInstance {
     private SlaStatus slaStatus;
 
     /**
-     * Clinical event time, in UTC, of whatever opened the occurrence. A calendar-day cycle is opened by
+     * Clinical event time, in UTC, of whatever opened the instance. A calendar-day cycle is opened by
      * the first event of its day, so this also gives the cycle's day: its date in the deployment's time
      * zone. The day is not stored separately.
      */
@@ -79,7 +79,7 @@ public class StepGroupInstance {
     private OffsetDateTime completedAt;
 
     /**
-     * Clinical event time, in UTC, from which nothing more is expected of the occurrence. Written by the
+     * Clinical event time, in UTC, from which nothing more is expected of the instance. Written by the
      * Matcher Service.
      */
     @Column(name = "closed_at")

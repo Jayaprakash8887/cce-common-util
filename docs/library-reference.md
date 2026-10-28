@@ -74,7 +74,7 @@ Identifiers are UUIDv7 via [`UuidV7Generator`](#6-support). Timestamps are stamp
 these to a clinical occurrence time, which must survive the insert rather than being overwritten
 with `now()`.
 
-`StepGroupInstance` is one occurrence of a step group for an enrollment: its group's action id, its parent occurrence for a nested group, its cycle number, and the facts `opened_at`, `due_date`, `completed_at`, `closed_at` and `sla_status`. `StepInstance.stepGroupInstance` points a step at its direct group's occurrence, or is null outside any group.
+`StepGroupInstance` is one instance of a step group for an enrollment: its group's action id, its parent instance for a nested group, its cycle number, and the facts `opened_at`, `due_date`, `completed_at`, `closed_at` and `sla_status`. `StepInstance.stepGroupInstance` points a step at its direct group's instance, or is null outside any group.
 
 `ProtocolDefinition.getCanonical()` and `ActionDefinition.getCanonical()` both render `url|version`,
 the form [`ActionDefinitionResolver`](#intelligence--actiondefinitionresolver) parses.
@@ -87,7 +87,7 @@ the form [`ActionDefinitionResolver`](#intelligence--actiondefinitionresolver) p
 
 `ProtocolInstanceRepository.findByIdForUpdate` reads an enrollment with a `PESSIMISTIC_WRITE` lock.
 The Matcher Service takes it before any step-group decision, so two events for one patient can't
-open the same group occurrence twice.
+open the same group instance twice.
 
 There is deliberately **no** `ProtocolDefinitionRepository` here. Read and write access to
 definitions differ sharply by service — the Protocol Service writes them, the others read a narrow
@@ -107,7 +107,7 @@ metadata and need no FHIR context.
 | `extractSteps(PlanDefinition)` | every step as `StepMetadata`, nested sub-steps flattened to peers; a step group is never a step, and `StepMetadata.groupId` names the step's nearest group |
 | `extractGroups(PlanDefinition)` | every step group (a `step`-typed action with `groupingBehavior: logical-group`) as `GroupMetadata`, with its `cycleBoundary` (`CALENDAR_DAY`, `ENTRY_STEP`, or null for a group that doesn't repeat per visit) |
 | `buildDependencyGraph(List<StepMetadata>, List<GroupMetadata>)` | `relatedAction` edges normalized into one directed `DependencyGraph`, groups included as nodes |
-| `memberSteps`, `memberGroups`, `descendantIds`, `entryMembers` | a group's direct members, everything inside it, and the mandatory members with no predecessor inside it, which an occurrence creates when it opens |
+| `memberSteps`, `memberGroups`, `descendantIds`, `entryMembers` | a group's direct members, everything inside it, and the mandatory members with no predecessor inside it, which a group instance creates when it opens |
 | `cycleEntrySteps` | the steps whose repeat opens a new cycle of an `entry-step` group: its direct steps with no predecessor inside it |
 | `classifyRelationship(String)` | a FHIR relationship code → `AFTER` / `BEFORE` / `UNORDERED` |
 | `findStep`, `computeMustPredecessorSteps`, `mustStepIds` | graph queries used for ordering checks and backfill. `computeMustPredecessorSteps` also follows what a step's enclosing groups wait on, so a step in ANC visit 2 has registration as a predecessor when the visit follows registration |
@@ -150,7 +150,7 @@ The clinical occurrence time from a FHIR payload — when the act happened, as a
 envelope `time` (the emitter's transmission clock) or the moment a service processed the event.
 
 FHIR has no single "when did this happen" field: each resource type carries its own, and most are
-polymorphic choice types (`effective[x]`, `performed[x]`, `occurrence[x]`), so the class holds a
+polymorphic choice types (`effective[x]`, `performed[x]`, `instance[x]`), so the class holds a
 resource-type → ordered-candidate-field table and takes the first that parses. A `Period`'s `end`
 bound says when something finished rather than when the act occurred, so it is the last resort in
 every list — after that same Period's `start`. Parsing is lenient (HAPI `DateTimeType`, so `2026` and
