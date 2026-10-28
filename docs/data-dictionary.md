@@ -34,6 +34,7 @@ For which service *creates* and which service *writes* each table, see
 4. [protocol_definition](#4-protocol_definition)
 5. [protocol_instance](#5-protocol_instance)
 6. [step_instance](#6-step_instance)
+   - [step_group_instance](#step-group-occurrences-step_group_instance)
 7. [step_sla_state_transition](#7-step_sla_state_transition)
 8. [deviation](#8-deviation)
 9. [trigger_index](#9-trigger_index)
@@ -53,8 +54,13 @@ erDiagram
     PROTOCOL_DEFINITION ||--o{ PROTOCOL_INSTANCE : "defines"
     PROTOCOL_DEFINITION ||--o{ TRIGGER_INDEX : "indexed by"
     PROTOCOL_INSTANCE ||--o{ STEP_INSTANCE : "contains"
+    PROTOCOL_INSTANCE ||--o{ STEP_GROUP_INSTANCE : "groups steps in"
+    STEP_GROUP_INSTANCE ||--o{ STEP_INSTANCE : "holds"
+    STEP_GROUP_INSTANCE ||--o{ STEP_GROUP_INSTANCE : "nests"
     STEP_INSTANCE ||--o{ STEP_SLA_STATE_TRANSITION : "scheduled for"
     STEP_INSTANCE ||--o{ DEVIATION : "causes"
+    STEP_GROUP_INSTANCE ||--o{ STEP_SLA_STATE_TRANSITION : "scheduled for"
+    STEP_GROUP_INSTANCE ||--o{ DEVIATION : "causes"
     PROTOCOL_INSTANCE ||..o{ PROTOCOL_INSTANCE_HISTORY : "status history"
     STEP_INSTANCE ||..o{ STEP_INSTANCE_HISTORY : "state history"
     MATCHER_EVENT_LOG ||--o| STEP_INSTANCE : "completes"
@@ -86,6 +92,7 @@ erDiagram
         uuid id PK
         uuid protocol_instance_id FK
         varchar action_id
+        uuid step_group_instance_id FK
         int repeat_index
         varchar step_status
         varchar sla_status
@@ -98,9 +105,25 @@ erDiagram
         timestamptz updated_at
     }
 
+    STEP_GROUP_INSTANCE {
+        uuid id PK
+        uuid protocol_instance_id FK
+        uuid parent_group_instance_id FK
+        varchar group_action_id
+        int cycle_index
+        timestamptz due_date
+        varchar sla_status
+        timestamptz opened_at
+        timestamptz completed_at
+        timestamptz closed_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
     STEP_SLA_STATE_TRANSITION {
         uuid id PK
         uuid step_instance_id FK
+        uuid step_group_instance_id FK
         varchar transition_type
         timestamptz process_by
         boolean is_processed
@@ -114,6 +137,7 @@ erDiagram
     DEVIATION {
         uuid id PK
         uuid step_instance_id FK
+        uuid step_group_instance_id FK
         varchar deviation_type
         timestamptz detected_at
         uuid intelligence_event_id
@@ -188,6 +212,7 @@ erDiagram
         jsonb event_payload
         uuid action_definition_id
         uuid step_instance_id
+        uuid step_group_instance_id
         uuid deviation_id
         varchar subject
         varchar action_type
@@ -226,16 +251,17 @@ erDiagram
 | 1 | `protocol_definition` | FHIR R4 PlanDefinition resources (protocol templates) | Low (tens) |
 | 2 | `protocol_instance` | Patient enrolments in specific protocols | Medium (per-patient) |
 | 3 | `step_instance` | Individual action steps within a patient's protocol journey | Medium–High |
-| 4 | `step_sla_state_transition` | Each step's SLA schedule — one row per verdict to be reached | Medium–High |
-| 5 | `deviation` | Recorded protocol deviations | Medium |
-| 6 | `trigger_index` | Inverted index for fast Tier 1 structural event matching | Low (per protocol load) |
-| 7 | `action_definition` | FHIR ActivityDefinition resources for intelligence actions | Low (tens) |
-| 8 | `intelligence_event_log` | Intelligence action execution and evaluation context (flat, no FKs) | Medium–High |
-| 9 | `protocol_instance_history` | Append-only log of every `protocol_instance.status` transition | High (per status change) |
-| 10 | `step_instance_history` | Append-only log of every `step_status` / `sla_status` transition | High (per status change) |
-| 11 | `matcher_event_log` † | Lean idempotency log of every inbound CloudEvent and its processing outcome | High (every event) |
-| 12 | `facility` † | Reference lookup of known facilities — auto-populated from inbound event payloads | Low (one row per facility) |
-| 13 | `inbound_event_log` ‡ | Every CloudEvent the Collector Service accepted or rejected, with its raw payload — the ingestion audit trail and deduplication key | High (every event) |
+| 4 | `step_group_instance` | One occurrence of a step group per enrolment, and per cycle of a repeating group | Medium (per group occurrence) |
+| 5 | `step_sla_state_transition` | Each step's SLA schedule — one row per verdict to be reached | Medium–High |
+| 6 | `deviation` | Recorded protocol deviations | Medium |
+| 7 | `trigger_index` | Inverted index for fast Tier 1 structural event matching | Low (per protocol load) |
+| 8 | `action_definition` | FHIR ActivityDefinition resources for intelligence actions | Low (tens) |
+| 9 | `intelligence_event_log` | Intelligence action execution and evaluation context (flat, no FKs) | Medium–High |
+| 10 | `protocol_instance_history` | Append-only log of every `protocol_instance.status` transition | High (per status change) |
+| 11 | `step_instance_history` | Append-only log of every `step_status` / `sla_status` transition | High (per status change) |
+| 12 | `matcher_event_log` † | Lean idempotency log of every inbound CloudEvent and its processing outcome | High (every event) |
+| 13 | `facility` † | Reference lookup of known facilities — auto-populated from inbound event payloads | Low (one row per facility) |
+| 14 | `inbound_event_log` ‡ | Every CloudEvent the Collector Service accepted or rejected, with its raw payload — the ingestion audit trail and deduplication key | High (every event) |
 
 † Columns documented in the Matcher Service repo
 ([`matcher_event_log`](https://github.com/openphc/cce-matcher-service/blob/release-2.0.0/docs/data-dictionary.md#2-matcher_event_log),
@@ -245,7 +271,7 @@ entities live.
 ‡ Columns documented in the
 [Collector Service repo](https://github.com/openphc/cce-collector-service/blob/release-2.0.0/docs/data-dictionary.md#1-database-tables).
 
-Everything else on this page covers rows 1-10.
+Everything else on this page covers rows 1-11.
 
 ---
 
