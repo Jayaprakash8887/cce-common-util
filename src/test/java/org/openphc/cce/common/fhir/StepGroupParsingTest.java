@@ -289,21 +289,21 @@ class StepGroupParsingTest {
     class Members {
 
         @Test
-        void entryMembersAreTheMandatoryMembersWithNoPredecessorInsideTheGroup() {
+        void membersCreatedOnOpen_areTheMandatoryMembersWithNoPredecessorInsideTheGroup() {
             PlanDefinition pd = reviewProtocol();
             List<StepMetadata> steps = parser.extractSteps(pd);
             List<GroupMetadata> groups = parser.extractGroups(pd);
 
-            var entry = PlanDefinitionParser.entryMembers("review", steps, groups,
+            var created = PlanDefinitionParser.membersCreatedOnOpen("review", steps, groups,
                     PlanDefinitionParser.buildDependencyGraph(steps, groups));
 
             // hba1c waits on vitals; the consultation is optional.
-            assertEquals(List.of("vitals"), entry.steps().stream().map(StepMetadata::id).toList());
-            assertTrue(entry.groups().isEmpty());
+            assertEquals(List.of("vitals"), created.steps().stream().map(StepMetadata::id).toList());
+            assertTrue(created.groups().isEmpty());
         }
 
         @Test
-        void aMemberWaitingOnAStepInANestedGroupIsNotAnEntryMember() {
+        void aMemberWaitingOnAStepInANestedGroup_isNotCreatedOnOpen() {
             PlanDefinition pd = new PlanDefinition();
             PlanDefinitionActionComponent journey = group(pd.addAction(), "journey", "must");
             PlanDefinitionActionComponent consultation = group(journey.addAction(), "consultation", "must");
@@ -313,11 +313,11 @@ class StepGroupParsingTest {
             List<StepMetadata> steps = parser.extractSteps(pd);
             List<GroupMetadata> groups = parser.extractGroups(pd);
 
-            var entry = PlanDefinitionParser.entryMembers("journey", steps, groups,
+            var created = PlanDefinitionParser.membersCreatedOnOpen("journey", steps, groups,
                     PlanDefinitionParser.buildDependencyGraph(steps, groups));
 
-            assertTrue(entry.steps().isEmpty());
-            assertEquals(List.of("consultation"), entry.groups().stream().map(GroupMetadata::id).toList());
+            assertTrue(created.steps().isEmpty());
+            assertEquals(List.of("consultation"), created.groups().stream().map(GroupMetadata::id).toList());
         }
 
         @Test

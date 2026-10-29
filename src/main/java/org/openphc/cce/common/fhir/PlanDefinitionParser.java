@@ -406,23 +406,24 @@ public class PlanDefinitionParser {
      * Creating them all at once would give, say, a day-3 lab the day-0 vitals' due date.
      *
      * <p>A predecessor counts as inside the group wherever it sits in the group's subtree, so a step
-     * waiting on a step in a nested group is not an entry member either.
+     * waiting on a step in a nested group is not created on opening either.
      */
-    public static EntryMembers entryMembers(String groupId, List<StepMetadata> steps,
-                                            List<GroupMetadata> groups, DependencyGraph graph) {
+    public static MembersCreatedOnOpen membersCreatedOnOpen(String groupId, List<StepMetadata> steps,
+                                                            List<GroupMetadata> groups,
+                                                            DependencyGraph graph) {
         Set<String> inside = descendantIds(groupId, steps, groups);
-        java.util.function.Predicate<String> isEntry =
+        java.util.function.Predicate<String> hasNoPredecessorInside =
                 id -> graph.predecessorsOf(id).stream().noneMatch(inside::contains);
 
-        List<StepMetadata> entrySteps = memberSteps(groupId, steps).stream()
+        List<StepMetadata> stepsToCreate = memberSteps(groupId, steps).stream()
                 .filter(s -> RequiredBehavior.isMandatory(s.requiredBehavior()))
-                .filter(s -> isEntry.test(s.id()))
+                .filter(s -> hasNoPredecessorInside.test(s.id()))
                 .toList();
-        List<GroupMetadata> entryGroups = memberGroups(groupId, groups).stream()
+        List<GroupMetadata> groupsToOpen = memberGroups(groupId, groups).stream()
                 .filter(GroupMetadata::isMandatory)
-                .filter(g -> isEntry.test(g.id()))
+                .filter(g -> hasNoPredecessorInside.test(g.id()))
                 .toList();
-        return new EntryMembers(entrySteps, entryGroups);
+        return new MembersCreatedOnOpen(stepsToCreate, groupsToOpen);
     }
 
     /**
@@ -1240,7 +1241,7 @@ public class PlanDefinitionParser {
      * @param steps  the mandatory member steps to create
      * @param groups the mandatory member groups to open
      */
-    public record EntryMembers(
+    public record MembersCreatedOnOpen(
             List<StepMetadata> steps,
             List<GroupMetadata> groups
     ) {}
