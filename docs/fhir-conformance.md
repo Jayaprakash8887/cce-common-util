@@ -139,10 +139,21 @@ A group that repeats per visit says what starts a new cycle with a CCE extension
 | `calendar-day` | for each clinical day, in the deployment's time zone, on which the group has events |
 | `entry-step` | when one of the group's entry steps (its steps with no predecessor inside the group) is matched after it was completed in the current cycle |
 
+An `entry-step` group can choose its entry steps instead, naming each by action id in its own
+extension. When it names any, only those start a new cycle:
+
+```json
+"extension": [
+  { "url": "http://openphc.org/fhir/StructureDefinition/cycle-boundary",   "valueCode": "entry-step" },
+  { "url": "http://openphc.org/fhir/StructureDefinition/cycle-entry-step", "valueId": "history" }
+]
+```
+
 FHIR's `Timing.repeat` only describes calendar repetition, so it has no way to say "a new cycle each
 visit"; hence the extension. `validateGroups` rejects any other code, the extension on an action that
 is not a group, a `calendar-day` group inside another repeating group, and an `entry-step` group with
-no entry step.
+no entry step. It also rejects `cycle-entry-step` on anything but an `entry-step` group, without a
+`valueId`, or naming anything but a step directly in the group with no predecessor inside it.
 
 ---
 
