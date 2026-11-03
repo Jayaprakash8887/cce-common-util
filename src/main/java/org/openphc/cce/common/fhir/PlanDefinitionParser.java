@@ -388,22 +388,6 @@ public class PlanDefinitionParser {
     }
 
     /**
-     * The steps whose repeat opens a new cycle of an {@code entry-step} group: its direct member steps,
-     * mandatory or not, with no predecessor anywhere inside the group. When the group names its entry
-     * steps ({@code cycle-entry-step}), only those named.
-     */
-    public static List<StepMetadata> cycleEntrySteps(String groupId, List<StepMetadata> steps,
-                                                     List<GroupMetadata> groups, DependencyGraph graph) {
-        Set<String> inside = descendantIds(groupId, steps, groups);
-        GroupMetadata group = findGroup(groups, groupId);
-        List<String> namedEntryStepIds = group != null ? group.namedEntryStepIds() : List.of();
-        return memberSteps(groupId, steps).stream()
-                .filter(s -> graph.predecessorsOf(s.id()).stream().noneMatch(inside::contains))
-                .filter(s -> namedEntryStepIds.isEmpty() || namedEntryStepIds.contains(s.id()))
-                .toList();
-    }
-
-    /**
      * The members an instance of a group creates when it opens: its mandatory direct members with no
      * predecessor inside the group. The rest arrive through progressive instantiation as their
      * predecessors complete, with the due dates their own {@code relatedAction} offsets give them.
@@ -577,8 +561,8 @@ public class PlanDefinitionParser {
             "http://openphc.org/fhir/StructureDefinition/cycle-boundary";
 
     /**
-     * The extension an {@code entry-step} group uses to name one of its entry steps by action id, once
-     * per entry step. Without it, every direct member step with no predecessor inside the group is one.
+     * The extension an {@code entry-step} group names its entry step with, by action id: the step whose
+     * repeat starts a new cycle. Every {@code entry-step} group has exactly one.
      */
     static final String CYCLE_ENTRY_STEP_EXTENSION_URL =
             "http://openphc.org/fhir/StructureDefinition/cycle-entry-step";
@@ -593,8 +577,8 @@ public class PlanDefinitionParser {
      * does a visit-driven ({@code cycle-boundary}) group, whose cycles have no planned due date. The
      * {@code cycle-boundary} extension is only on a group, with {@code calendar-day} or {@code entry-step};
      * a group inside a repeating group repeats only by {@code entry-step}; and an {@code entry-step} group
-     * has at least one entry step. The {@code cycle-entry-step} extension is only on an {@code entry-step}
-     * group, and names a step directly in it with no predecessor inside it.
+     * names its entry step, a step directly in it with no predecessor inside it, in exactly one
+     * {@code cycle-entry-step} extension, which no other action carries.
      *
      * <p>Rules that hold until the feature behind them is built: no {@code timing} on a group (scheduled
      * repeats), no {@code tolerance-days} on a group (group deadlines), no {@code fire-event} action on a
@@ -614,8 +598,7 @@ public class PlanDefinitionParser {
         }
         DependencyGraph graph = buildDependencyGraph(flattened.steps(), flattened.groups());
         rejectFollowersOfGroups(flattened.groups(), graph);
-        rejectNamedEntryStepsThatCannotStartACycle(flattened.steps(), flattened.groups(), graph);
-        rejectEntryStepGroupsWithNoEntryStep(flattened.steps(), flattened.groups(), graph);
+        rejectEntryStepsThatCannotStartACycle(flattened.steps(), flattened.groups(), graph);
     }
 
     // Until groups can complete or close, whatever follows one would never be created.
@@ -710,9 +693,7 @@ public class PlanDefinitionParser {
         if (cycleBoundary != null) {
             validateCycleBoundary(id, cycleBoundary, insideRepeatingGroup);
         }
-        if (group.hasExtension(CYCLE_ENTRY_STEP_EXTENSION_URL)) {
-            validateCycleEntrySteps(id, group, cycleBoundary);
-        }
+        validateCycleEntryStep(id, group, cycleBoundary);
         for (PlanDefinition.PlanDefinitionActionComponent nested : group.getAction()) {
             if (isIntelligenceAction(nested)) {
                 throw new IllegalArgumentException(
@@ -737,61 +718,57 @@ public class PlanDefinitionParser {
         }
     }
 
-    private static void validateCycleEntrySteps(String groupId, PlanDefinition.PlanDefinitionActionComponent group,
-                                                Extension cycleBoundary) {
-        if (cycleBoundary == null || !(cycleBoundary.getValue() instanceof CodeType code)
-                || !CycleBoundary.ENTRY_STEP.code().equals(code.getCode())) {
-            throw new IllegalArgumentException(
-                    "Group '" + groupId + "' names an entry step (cycle-entry-step) but does not repeat by "
-                            + "entry-step. Only an entry-step group starts a new cycle when an entry step repeats.");
-        }
-        for (Extension entryStep : group.getExtensionsByUrl(CYCLE_ENTRY_STEP_EXTENSION_URL)) {
-            if (!(entryStep.getValue() instanceof IdType)) {
+    private static void validateCycleEntryStep(String groupId, PlanDefinition.PlanDefinitionActionComponent group,
+                                               Extension cycleBoundary) {
+        boolean repeatsByEntryStep = cycleBoundary != null && cycleBoundary.getValue() instanceof CodeType code
+                && CycleBoundary.ENTRY_STEP.code().equals(code.getCode());
+        List<Extension> entrySteps = group.getExtensionsByUrl(CYCLE_ENTRY_STEP_EXTENSION_URL);
+        if (!repeatsByEntryStep) {
+            if (!entrySteps.isEmpty()) {
                 throw new IllegalArgumentException(
-                        "Group '" + groupId + "' has the cycle-entry-step extension with no valueId. Name the "
-                                + "entry step by its action id in valueId.");
+                        "Group '" + groupId + "' names an entry step (cycle-entry-step) but does not repeat by "
+                                + "entry-step. Only an entry-step group starts a new cycle when its entry step "
+                                + "repeats.");
             }
+            return;
+        }
+        if (entrySteps.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Group '" + groupId + "' repeats by entry-step but names no entry step. Name the step whose "
+                            + "repeat starts a new cycle in the cycle-entry-step extension.");
+        }
+        if (entrySteps.size() > 1) {
+            throw new IllegalArgumentException(
+                    "Group '" + groupId + "' has the cycle-entry-step extension " + entrySteps.size() + " times. "
+                            + "A group names only one entry step.");
+        }
+        if (!(entrySteps.get(0).getValue() instanceof IdType)) {
+            throw new IllegalArgumentException(
+                    "Group '" + groupId + "' has the cycle-entry-step extension with no valueId. Name the "
+                            + "entry step by its action id in valueId.");
         }
     }
 
-    // A named entry step must be able to start a cycle: a step directly in the group, waiting on nothing in it.
-    private static void rejectNamedEntryStepsThatCannotStartACycle(List<StepMetadata> steps,
-                                                                   List<GroupMetadata> groups,
-                                                                   DependencyGraph graph) {
+    // An entry step must be able to start a cycle: a step directly in the group, waiting on nothing in it.
+    private static void rejectEntryStepsThatCannotStartACycle(List<StepMetadata> steps, List<GroupMetadata> groups,
+                                                              DependencyGraph graph) {
         for (GroupMetadata group : groups) {
-            if (group.namedEntryStepIds().isEmpty()) {
+            String entryStepId = group.entryStepId();
+            if (entryStepId == null) {
                 continue;
             }
-            Set<String> inside = descendantIds(group.id(), steps, groups);
-            Set<String> memberStepIds = memberSteps(group.id(), steps).stream()
-                    .map(StepMetadata::id)
-                    .collect(Collectors.toSet());
-            for (String entryStepId : group.namedEntryStepIds()) {
-                if (!memberStepIds.contains(entryStepId)) {
-                    throw new IllegalArgumentException(
-                            "Group '" + group.id() + "' names '" + entryStepId + "' as an entry step, which is not "
-                                    + "a step directly in it. An entry step is one of the group's own steps, not "
-                                    + "a group or a step in a nested group.");
-                }
-                if (graph.predecessorsOf(entryStepId).stream().anyMatch(inside::contains)) {
-                    throw new IllegalArgumentException(
-                            "Group '" + group.id() + "' names '" + entryStepId + "' as an entry step, but it "
-                                    + "waits on another action inside the group, so it cannot start a cycle.");
-                }
-            }
-        }
-    }
-
-    // An entry-step group opens a new cycle only when an entry step repeats, so it needs one.
-    private static void rejectEntryStepGroupsWithNoEntryStep(List<StepMetadata> steps, List<GroupMetadata> groups,
-                                                             DependencyGraph graph) {
-        for (GroupMetadata group : groups) {
-            if (group.cycleBoundary() == CycleBoundary.ENTRY_STEP
-                    && cycleEntrySteps(group.id(), steps, groups, graph).isEmpty()) {
+            boolean isMemberStep = memberSteps(group.id(), steps).stream().anyMatch(s -> entryStepId.equals(s.id()));
+            if (!isMemberStep) {
                 throw new IllegalArgumentException(
-                        "Group '" + group.id() + "' repeats by entry-step but has no entry step: every step "
-                                + "directly in it waits on another step inside it, so no new cycle could ever "
-                                + "start.");
+                        "Group '" + group.id() + "' names '" + entryStepId + "' as its entry step, which is not "
+                                + "a step directly in it. An entry step is one of the group's own steps, not "
+                                + "a group or a step in a nested group.");
+            }
+            Set<String> inside = descendantIds(group.id(), steps, groups);
+            if (graph.predecessorsOf(entryStepId).stream().anyMatch(inside::contains)) {
+                throw new IllegalArgumentException(
+                        "Group '" + group.id() + "' names '" + entryStepId + "' as its entry step, but it "
+                                + "waits on another action inside the group, so it cannot start a cycle.");
             }
         }
     }
@@ -991,7 +968,7 @@ public class PlanDefinitionParser {
                     action.hasSelectionBehavior() ? action.getSelectionBehavior().toCode() : null,
                     CycleBoundary.fromCode(extractCodeExtension(action, CYCLE_BOUNDARY_EXTENSION_URL))
                             .orElse(null),
-                    extractNamedEntryStepIds(action),
+                    extractEntryStepId(action),
                     intelligenceActions
             ));
         } else {
@@ -1178,11 +1155,9 @@ public class PlanDefinitionParser {
         return null;
     }
 
-    private static List<String> extractNamedEntryStepIds(PlanDefinition.PlanDefinitionActionComponent action) {
-        return action.getExtensionsByUrl(CYCLE_ENTRY_STEP_EXTENSION_URL).stream()
-                .filter(ext -> ext.getValue() instanceof IdType)
-                .map(ext -> ((IdType) ext.getValue()).getValue())
-                .toList();
+    private static String extractEntryStepId(PlanDefinition.PlanDefinitionActionComponent action) {
+        Extension ext = action.getExtensionByUrl(CYCLE_ENTRY_STEP_EXTENSION_URL);
+        return ext != null && ext.getValue() instanceof IdType id ? id.getValue() : null;
     }
 
     private String extractCodeExtension(PlanDefinition.PlanDefinitionActionComponent action, String url) {
@@ -1281,8 +1256,8 @@ public class PlanDefinitionParser {
      *                          opened in advance and never counts towards its parent's completion.
      * @param selectionBehavior FHIR {@code selectionBehavior}; absent and {@code all} both mean every
      *                          mandatory member must be done
-     * @param namedEntryStepIds the entry steps an {@code entry-step} group names ({@code cycle-entry-step}),
-     *                          or empty when it names none and they are worked out ({@link #cycleEntrySteps})
+     * @param entryStepId       for an {@code entry-step} group, the step whose repeat starts a new cycle
+     *                          ({@code cycle-entry-step}); null for any other group
      */
     public record GroupMetadata(
             String id,
@@ -1294,7 +1269,7 @@ public class PlanDefinitionParser {
             String requiredBehavior,
             String selectionBehavior,
             CycleBoundary cycleBoundary,
-            List<String> namedEntryStepIds,
+            String entryStepId,
             List<IntelligenceActionInfo> intelligenceActions
     ) {
         public boolean isMandatory() {

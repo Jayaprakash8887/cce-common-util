@@ -11,7 +11,10 @@ public enum CycleBoundary {
     /** A new cycle for each clinical day, in the deployment's time zone, on which the group has events. */
     CALENDAR_DAY("calendar-day"),
 
-    /** A new cycle when one of the group's entry steps is matched after it was completed in the current cycle. */
+    /**
+     * A new cycle when the group's entry step, named in {@code cycle-entry-step}, is matched after it was
+     * completed in the current cycle.
+     */
     ENTRY_STEP("entry-step");
 
     private final String code;
