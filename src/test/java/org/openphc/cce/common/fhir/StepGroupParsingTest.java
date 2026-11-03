@@ -5,6 +5,7 @@ import org.hl7.fhir.r4.model.CodeType;
 import org.hl7.fhir.r4.model.Coding;
 import org.hl7.fhir.r4.model.Duration;
 import org.hl7.fhir.r4.model.Extension;
+import org.hl7.fhir.r4.model.IdType;
 import org.hl7.fhir.r4.model.IntegerType;
 import org.hl7.fhir.r4.model.PlanDefinition;
 import org.hl7.fhir.r4.model.PlanDefinition.ActionGroupingBehavior;
@@ -88,7 +89,10 @@ class StepGroupParsingTest {
         return group;
     }
 
-    /** A visit that repeats per calendar day: check-in, then a Consultation of history and examination. */
+    /**
+     * A visit that repeats per calendar day: check-in, then a Consultation of history and examination.
+     * Repeating by entry step, the Consultation names history as its entry step.
+     */
     private static PlanDefinition journeyProtocol(String consultationBoundary) {
         PlanDefinition pd = new PlanDefinition();
         PlanDefinitionActionComponent journey = repeatingBy(group(pd.addAction(), "journey", "must"), "calendar-day");
@@ -97,8 +101,26 @@ class StepGroupParsingTest {
         if (consultationBoundary != null) {
             repeatingBy(consultation, consultationBoundary);
         }
+        if ("entry-step".equals(consultationBoundary)) {
+            namingEntryStep(consultation, "history");
+        }
         triggeredStep(consultation.addAction(), "history", "2");
         after(triggeredStep(consultation.addAction(), "examination", "3"), "history", 0);
+        return pd;
+    }
+
+    private static PlanDefinitionActionComponent namingEntryStep(PlanDefinitionActionComponent group, String stepId) {
+        group.addExtension(new Extension(PlanDefinitionParser.CYCLE_ENTRY_STEP_EXTENSION_URL, new IdType(stepId)));
+        return group;
+    }
+
+    /** A Consultation repeating by entry step, of history and BP, neither waiting on the other, naming no entry step. */
+    private static PlanDefinition consultationOfHistoryAndBp() {
+        PlanDefinition pd = new PlanDefinition();
+        PlanDefinitionActionComponent consultation =
+                repeatingBy(group(pd.addAction(), "consultation", "must"), "entry-step");
+        triggeredStep(consultation.addAction(), "history", "10164-2");
+        triggeredStep(consultation.addAction(), "bp", "85354-9");
         return pd;
     }
 
@@ -521,28 +543,90 @@ class StepGroupParsingTest {
         }
 
         @Test
-        void anEntryStepGroupWithNoEntryStepIsRejected() {
-            // Every step directly in the consultation waits on one inside its nested group.
-            PlanDefinition pd = new PlanDefinition();
-            PlanDefinitionActionComponent consultation =
-                    repeatingBy(group(pd.addAction(), "consultation", "must"), "entry-step");
-            PlanDefinitionActionComponent intake = group(consultation.addAction(), "intake", "must");
-            triggeredStep(intake.addAction(), "history", "2");
-            after(triggeredStep(consultation.addAction(), "examination", "3"), "history", 0);
-
-            assertRejected(pd, "Group 'consultation' repeats by entry-step but has no entry step");
+        void anEntryStepGroupThatNamesNoEntryStepIsRejected() {
+            assertRejected(consultationOfHistoryAndBp(),
+                    "Group 'consultation' repeats by entry-step but names no entry step");
         }
 
         @Test
-        void theEntryStepsOfAGroupAreItsStepsWithNoPredecessorInsideIt() {
-            PlanDefinition pd = journeyProtocol("entry-step");
-            List<StepMetadata> steps = parser.extractSteps(pd);
-            List<GroupMetadata> groups = parser.extractGroups(pd);
+        void theEntryStepIsTheStepTheGroupNames() {
+            PlanDefinition pd = consultationOfHistoryAndBp();
+            namingEntryStep(pd.getAction().get(0), "history");
 
-            List<StepMetadata> entry = PlanDefinitionParser.cycleEntrySteps("consultation", steps, groups,
-                    PlanDefinitionParser.buildDependencyGraph(steps, groups));
+            assertDoesNotThrow(() -> parser.validateGroups(pd));
+            assertEquals("history", parser.extractGroups(pd).get(0).entryStepId());
+        }
 
-            assertEquals(List.of("history"), entry.stream().map(StepMetadata::id).toList());
+        @Test
+        void aGroupThatDoesNotRepeatByEntryStepHasNoEntryStep() {
+            List<GroupMetadata> groups = parser.extractGroups(journeyProtocol(null));
+
+            assertNull(groups.get(0).entryStepId());
+            assertNull(groups.get(1).entryStepId());
+        }
+
+        @Test
+        void namingMoreThanOneEntryStepIsRejected() {
+            PlanDefinition pd = consultationOfHistoryAndBp();
+            namingEntryStep(namingEntryStep(pd.getAction().get(0), "history"), "bp");
+
+            assertRejected(pd, "Group 'consultation' has the cycle-entry-step extension 2 times");
+        }
+
+        @Test
+        void namingAnEntryStepOnAGroupThatDoesNotRepeatByEntryStepIsRejected() {
+            PlanDefinition pd = reviewProtocol();
+            namingEntryStep(pd.getAction().get(0), "vitals");
+
+            assertRejected(pd, "Group 'review' names an entry step (cycle-entry-step) but does not repeat by entry-step");
+        }
+
+        @Test
+        void namingAnEntryStepOnAPlainStepIsRejected() {
+            PlanDefinition pd = consultationOfHistoryAndBp();
+            namingEntryStep(pd.getAction().get(0), "history");
+            namingEntryStep(pd.getAction().get(0).getAction().get(0), "history");
+
+            assertRejected(pd, "Action 'history' declares the cycle-entry-step extension but is not a step group");
+        }
+
+        @Test
+        void anEntryStepThatIsNotAnIdIsRejected() {
+            PlanDefinition pd = consultationOfHistoryAndBp();
+            pd.getAction().get(0).addExtension(new Extension(
+                    PlanDefinitionParser.CYCLE_ENTRY_STEP_EXTENSION_URL, new StringType("history")));
+
+            assertRejected(pd, "Group 'consultation' has the cycle-entry-step extension with no valueId");
+        }
+
+        @Test
+        void namingAStepOutsideTheGroupIsRejected() {
+            PlanDefinition pd = consultationOfHistoryAndBp();
+            triggeredStep(pd.addAction(), "registration", "1");
+            namingEntryStep(pd.getAction().get(0), "registration");
+
+            assertRejected(pd, "Group 'consultation' names 'registration' as its entry step, which is not a step directly in it");
+        }
+
+        @Test
+        void namingAStepInANestedGroupIsRejected() {
+            PlanDefinition pd = consultationOfHistoryAndBp();
+            PlanDefinitionActionComponent intake = group(pd.getAction().get(0).addAction(), "intake", "must");
+            triggeredStep(intake.addAction(), "weight", "29463-7");
+            namingEntryStep(pd.getAction().get(0), "weight");
+
+            assertRejected(pd, "Group 'consultation' names 'weight' as its entry step, which is not a step directly in it");
+        }
+
+        @Test
+        void namingAStepThatWaitsOnAnotherInsideTheGroupIsRejected() {
+            PlanDefinition pd = new PlanDefinition();
+            PlanDefinitionActionComponent consultation =
+                    namingEntryStep(repeatingBy(group(pd.addAction(), "consultation", "must"), "entry-step"), "examination");
+            triggeredStep(consultation.addAction(), "history", "2");
+            after(triggeredStep(consultation.addAction(), "examination", "3"), "history", 0);
+
+            assertRejected(pd, "Group 'consultation' names 'examination' as its entry step, but it waits on another action inside the group");
         }
 
         @Test
