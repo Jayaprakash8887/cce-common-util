@@ -12,8 +12,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.lang.reflect.Method;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -48,6 +50,20 @@ class GlobalExceptionHandlerTest {
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertEquals("Invalid canonical format", response.getBody().getMessage());
+    }
+
+    @Test
+    void unparsablePathVariableBecomes400NotTheGeneric500() throws Exception {
+        Method method = Payload.class.getDeclaredMethod("find", UUID.class);
+        MethodArgumentTypeMismatchException ex = new MethodArgumentTypeMismatchException(
+                "abc123", UUID.class, "id", new MethodParameter(method, 0), new IllegalArgumentException());
+
+        ResponseEntity<ErrorResponse> response = handler.handleTypeMismatch(ex);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals(400, response.getBody().getStatus());
+        assertEquals("Bad Request", response.getBody().getError());
+        assertEquals("id: invalid UUID 'abc123'", response.getBody().getMessage());
     }
 
     @Test
@@ -143,6 +159,10 @@ class GlobalExceptionHandlerTest {
 
         @SuppressWarnings("unused")
         void handle(String body) {
+        }
+
+        @SuppressWarnings("unused")
+        void find(UUID id) {
         }
     }
 }
