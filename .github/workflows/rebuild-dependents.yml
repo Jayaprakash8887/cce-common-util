@@ -1,0 +1,103 @@
+name: Rebuild dependent services
+
+# Every service builds against this library as a Gradle composite build, so its code is baked into
+# each service's image at build time. A change here reaches a running service only when that service
+# is rebuilt — and a push to this repository triggers none of their pipelines. This workflow closes
+# the gap: it runs each dependent service's own build workflow against the same release line, waits
+# for all of them, then asks deploy-scripts to roll dev out once.
+
+on:
+  push:
+    # Same pattern the services build on, so each release line rebuilds its own images
+    branches: [ "release-*" ]
+  workflow_dispatch:
+
+# A second push while the services are still building supersedes the first: their builds read this
+# branch's head, so only the latest run's images are worth deploying.
+concurrency:
+  group: rebuild-dependents-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    name: Rebuild ${{ matrix.repo }}
+    runs-on: ubuntu-latest
+    strategy:
+      # One service failing to build must not cancel the others mid-run
+      fail-fast: false
+      matrix:
+        include:
+          - repo: cce-matcher-service
+            workflow: BuildAndPushGHCR.yml
+          - repo: cce-collector-service
+            workflow: BuildAndPushECR.yaml
+          - repo: cce-step-sla-service
+            workflow: BuildAndPushECR.yml
+          - repo: cce-protocol-service
+            workflow: BuildAndPushGHCR.yml
+    env:
+      # Needs actions:write on each service repository; GITHUB_TOKEN is scoped to this one
+      GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+      REPO: openphc/${{ matrix.repo }}
+      WORKFLOW: ${{ matrix.workflow }}
+      REF: ${{ github.ref_name }}
+    steps:
+      - name: Skip a service without this release line
+        id: branch
+        run: |
+          if gh api "repos/${REPO}/branches/${REF}" --silent 2>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::${REPO} has no '${REF}' branch — nothing to rebuild"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch the service build
+        if: steps.branch.outputs.exists == 'true'
+        id: dispatch
+        run: |
+          # Taken before dispatching, so the run found below is this dispatch's and not an older one
+          echo "since=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          gh workflow run "${WORKFLOW}" -R "${REPO}" --ref "${REF}"
+
+      - name: Wait for the build
+        if: steps.branch.outputs.exists == 'true'
+        run: |
+          # A dispatch does not return its run id; the run appears in the listing a few seconds later
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            RUN_ID=$(gh run list -R "${REPO}" --workflow "${WORKFLOW}" --branch "${REF}" \
+                       --event workflow_dispatch --limit 10 --json databaseId,createdAt \
+                       --jq "[.[] | select(.createdAt >= \"${{ steps.dispatch.outputs.since }}\")] | last | .databaseId // empty")
+            [ -n "${RUN_ID}" ] && break
+            sleep 10
+          done
+          if [ -z "${RUN_ID}" ]; then
+            echo "::error::No ${WORKFLOW} run appeared in ${REPO} after dispatch"
+            exit 1
+          fi
+          echo "Following https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          gh run watch "${RUN_ID}" -R "${REPO}" --interval 30 --exit-status
+
+  # The service workflows deploy only on their own pushes, never on a dispatch, so the rollout is
+  # requested here — once, after every image is pushed, rather than once per service.
+  trigger-deploy:
+    needs: rebuild
+    runs-on: ubuntu-latest
+    if: success()
+    env:
+      GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+    steps:
+      - name: Trigger deploy-scripts workflow_dispatch
+        run: |
+          gh api --method POST \
+            /repos/openphc/deploy-scripts/actions/workflows/deploy.yml/dispatches \
+            --input - <<'JSON'
+          {
+            "ref": "main",
+            "inputs": { "target_env": "dev" }
+          }
+          JSON
