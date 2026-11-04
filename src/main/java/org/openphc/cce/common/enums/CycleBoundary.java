@@ -12,8 +12,9 @@ public enum CycleBoundary {
     CALENDAR_DAY("calendar-day"),
 
     /**
-     * A new cycle when the group's entry step, named in {@code cycle-entry-step}, is matched after it was
-     * completed in the current cycle.
+     * A new cycle with each event for the group's entry step, named in {@code cycle-entry-step}, unless the
+     * current cycle still awaits it. The first cycle opens with an event for any of its steps, or when a step
+     * outside the group that the entry step follows completes.
      */
     ENTRY_STEP("entry-step");
 

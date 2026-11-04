@@ -137,7 +137,7 @@ A group that repeats per visit says what starts a new cycle with a CCE extension
 | `valueCode` | A new cycle starts |
 |---|---|
 | `calendar-day` | for each clinical day, in the deployment's time zone, on which the group has events |
-| `entry-step` | when the group's entry step is matched after it was completed in the current cycle |
+| `entry-step` | with each event for the group's entry step, unless the current cycle still awaits it; the first cycle opens with an event for any of its steps, or when a step outside the group that the entry step follows completes |
 
 An `entry-step` group names its entry step by action id in a second extension, which it must carry
 exactly once:
