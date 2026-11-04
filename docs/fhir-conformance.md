@@ -28,14 +28,9 @@ to follow each patient's journey through the protocol:
 A step that follows nothing, such as the first step of a protocol, starts the journey. It is created
 when its own event arrives, or when its group opens.
 
-### Which step comes first
+### `after-end`: the only supported relationship
 
-A `relatedAction` sits on one step, the *declaring* step, and names another, the *referenced* step.
-Its `relationship` says where the declaring step sits compared with the referenced one. So which step
-comes first depends on the kind of relationship. This is the easiest thing to get backwards. Getting it
-backwards reverses every step of the journey.
-
-### `after-*`: the referenced step comes first
+A `relatedAction` is written on the **later** step, and names the step it follows.
 
 ```json
 { "id": "lab-results",
@@ -44,58 +39,39 @@ backwards reverses every step of the journey.
                       "offsetDuration": { "value": 3, "unit": "d" } }] }
 ```
 
-Read it as: *lab-results happens 3 days after lab-order ends.*
+Read it as: *lab-results is due 3 days after lab-order is done.*
 - `lab-order` comes first.
 - The `relatedAction` is written on `lab-results`, the later step.
 
 So a step's own `relatedAction` list names **what it waits for**, not what waits for it.
 
-A `relatedAction` with **no** `relationship` is read as `after-end`. That is what authors almost always
-mean.
+`after-end` is the default. A `relatedAction` with **no** `relationship` is read as `after-end`, so
+it can be left out.
 
-### `before-*`: the declaring step comes first
+### Other relationships are refused
 
-```json
-{ "id": "visit-encounter",
-  "relatedAction": [{ "actionId": "vitals-recording", "relationship": "before" }] }
-```
+FHIR has other `relationship` codes. CCE refuses all of them when the protocol is loaded:
 
-Read it as: *visit-encounter happens before vitals-recording.*
-- `visit-encounter` comes first.
-- The `relatedAction` is written on `visit-encounter`, the earlier step.
+| `relationship` | Why it is refused |
+|---|---|
+| `after`, `after-start` | They count from a different moment than `after-end`. One rule is easier to follow. |
+| `before`, `before-start`, `before-end` | They say the same order from the other step. A protocol that mixes both ways is easy to read backwards. |
+| `concurrent`, `concurrent-with-start`, `concurrent-with-end` | They set no order at all, so they would neither create the next step nor check the order. |
 
-This is the same kind of order as `after-*`, written from the other side. CCE accepts both.
-`buildDependencyGraph` turns each `before-*` into the matching `after-end`, so the rest of the code only
-deals with one direction.
+`validateRelationships` refuses each one, and says how to fix it: write the `relatedAction` on the later
+step, naming the step it follows, with `after-end` or no `relationship`. For example, instead of
+`visit-encounter` "before" `vitals-recording`, write on `vitals-recording`: "`after-end` `visit-encounter`".
 
-Authors do mix both forms in one protocol. Code that read only one form would lose the steps written in
-the other form, and the journey would break there.
-
-### `concurrent-*`: no order
-
-`concurrent`, `concurrent-with-start` and `concurrent-with-end` say the two steps happen together. So
-neither comes first.
-- No step is created because of it.
-- No order violation is checked for it.
-
-`findUnorderedRelationships` reports each one when the protocol is loaded. So an author who expected it
-to set an order finds out straight away.
-
-### Summary
-
-| `relationship` | Direction | Which step comes first |
-|---|---|---|
-| none, `after`, `after-start`, `after-end` | `AFTER` | the referenced step |
-| `before`, `before-start`, `before-end` | `BEFORE` | the declaring step |
-| `concurrent`, `concurrent-with-start`, `concurrent-with-end`, anything else | `UNORDERED` | neither |
+A protocol stored before this check still works as it did. CCE still reads the old relationships the way
+it always has.
 
 ### A `relatedAction` to a step that doesn't exist
 
 A `relatedAction` can name an `actionId` that no step in the protocol has, for example after a typo. It
 then sets no order. `findDanglingRelatedActions` reports each one when the protocol is loaded.
 
-This, and `concurrent-*`, are warnings, not errors. The protocol still loads. Both were accepted before,
-so refusing them now would break a system that already sends such protocols.
+This is a warning, not an error. The protocol still loads. It was accepted before, so refusing it now
+would break a system that already sends such protocols.
 
 ### A step in a `calendar-day` group that follows a step outside the group
 

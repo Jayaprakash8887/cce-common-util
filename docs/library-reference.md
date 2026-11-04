@@ -108,9 +108,10 @@ metadata and need no FHIR context.
 | `extractGroups(PlanDefinition)` | every step group (a `step`-typed action with `groupingBehavior: logical-group`) as `GroupMetadata`, with its `cycleBoundary` (`CALENDAR_DAY`, `ENTRY_STEP`, or null for a group that doesn't repeat per visit) and, for an `entry-step` group, its `entryStepId` |
 | `buildDependencyGraph(List<StepMetadata>, List<GroupMetadata>)` | `relatedAction` edges normalized into one directed `DependencyGraph`, groups included as nodes |
 | `memberSteps`, `memberGroups`, `descendantIds`, `membersCreatedOnOpen` | a group's direct members, everything inside it, and the mandatory members with no predecessor inside it, which a group instance creates when it opens |
-| `classifyRelationship(String)` | a FHIR relationship code → `AFTER` / `BEFORE` / `UNORDERED` |
+| `validateRelationships(PlanDefinition)` | refuses any `relatedAction` relationship other than `after-end` (no relationship means `after-end`) |
+| `classifyRelationship(String)` | a FHIR relationship code → `AFTER` / `BEFORE` / `UNORDERED`. Only `after-end` loads now; the others are still read for protocols stored before that check |
 | `findStep`, `computeMustPredecessorSteps`, `mustStepIds` | graph queries used for ordering checks and backfill. `computeMustPredecessorSteps` also follows what a step's enclosing groups wait on, so a step in ANC visit 2 has registration as a predecessor when the visit follows registration |
-| `findUnorderedRelationships`, `findDanglingRelatedActions` | load-time diagnostics for edges that establish no ordering |
+| `findDanglingRelatedActions` | load-time warning for a `relatedAction` naming an action the protocol doesn't have |
 | `findOffsetsIgnoredInCalendarDayGroups` | load-time diagnostic for an offset that sets no due date: on a step inside a `calendar-day` group, to an action outside it |
 | `buildTriggerIndexEntries(PlanDefinition, UUID)` | the trigger index rows for a definition, as persistence-agnostic `TriggerIndexEntry` records |
 | `extractConditionOnlyTriggers(PlanDefinition)` | triggers with a condition but no `data[]`, evaluated in memory |
@@ -233,7 +234,8 @@ SlaThresholds getThresholds(UUID stepInstanceId)
 Read-only and `Propagation.SUPPORTS`, so it can be called inside or outside a transaction.
 
 **It is not compliance-only, despite reading SLA rows.** The Matcher Service calls it when scheduling
-a dependent step, to anchor an after-start offset to the step it follows, and the shared intelligence
+a dependent step, to anchor an after-start offset to the step it follows (only in a protocol stored before
+`after-end` became the only supported relationship), and the shared intelligence
 evaluator calls it to build the `dueDate` and `daysOverdue` of a rule context — which both services
 drive. Neither should re-derive the deadlines from the definition: the schedule already exists as rows,
 and recomputing risks disagreeing with what was scheduled. Only the Matcher Service *writes* the
