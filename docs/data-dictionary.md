@@ -1057,7 +1057,7 @@ The `definition` column stores the complete FHIR R4 PlanDefinition resource. Key
       }],
       "relatedAction": [{                      // prerequisite: anc-visit-1 comes after enrollment
         "actionId": "enrollment",
-        "relationship": "after-start",
+        "relationship": "after-end",               // the only supported relationship
         "offsetDuration": { "value": 8, "unit": "wk" }
       }],
       "timingTiming": {                        // repeating step timing

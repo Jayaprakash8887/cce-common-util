@@ -107,10 +107,12 @@ public class PlanDefinitionParser {
      *       <em>declaring</em> action is the prerequisite. Same ordering, stated from the other
      *       end.</li>
      *   <li>{@code UNORDERED} — {@code concurrent-*} says the two happen together and so implies no
-     *       ordering. Such an edge drives neither progressive instantiation nor order checks;
-     *       {@link #findUnorderedRelationships} reports them at load time so a protocol relying on
-     *       one does not fail silently.</li>
+     *       ordering. Such an edge drives neither progressive instantiation nor order checks.</li>
      * </ul>
+     *
+     * <p>Only {@code after-end}, or no relationship, is supported in a protocol:
+     * {@link #validateRelationships} refuses the others at load. They are all still read here, so a
+     * protocol stored before that check keeps working as it did.
      */
     public enum RelationshipDirection { AFTER, BEFORE, UNORDERED }
 
@@ -291,24 +293,6 @@ public class PlanDefinitionParser {
         }
         ancestors.retainAll(mustStepIds);
         return ancestors;
-    }
-
-    /**
-     * Describe every {@code relatedAction} whose relationship implies no ordering
-     * ({@code concurrent-*}), so a protocol that expects one to sequence steps is reported at load
-     * time instead of quietly producing a disconnected graph. Steps and step groups both declare edges.
-     */
-    public static List<String> findUnorderedRelationships(List<StepMetadata> steps, List<GroupMetadata> groups) {
-        List<String> found = new ArrayList<>();
-        for (Map.Entry<String, List<RelatedStepInfo>> node : declaredEdges(steps, groups).entrySet()) {
-            for (RelatedStepInfo edge : node.getValue()) {
-                if (classifyRelationship(edge.relationship()) == RelationshipDirection.UNORDERED) {
-                    found.add("action '" + node.getKey() + "' -> '" + edge.actionId()
-                            + "' (relationship=" + edge.relationship() + ")");
-                }
-            }
-        }
-        return found;
     }
 
     /**
@@ -845,6 +829,42 @@ public class PlanDefinitionParser {
                             + "for requiredBehavior='must' steps, which are the only steps that can go "
                             + "OVERDUE or MISSED. Declare requiredBehavior='must' or remove the "
                             + "extension: " + String.join("; ", offenders));
+        }
+    }
+
+    /**
+     * Validate that every {@code relatedAction} uses the one supported relationship, {@code after-end}.
+     * A {@code relatedAction} with no relationship means {@code after-end}, so it is accepted too.
+     *
+     * <p>A {@code relatedAction} is written on the later step and names the step it follows. The later
+     * step is due its offset after the earlier step is done. That one form is enough to describe any
+     * journey, and it reads one way only. The other relationships are refused at load, so an author never
+     * believes one works the way it reads when it doesn't:
+     * <ul>
+     *   <li>{@code before-*} says the same thing from the other step, which is easy to get backwards;</li>
+     *   <li>{@code after-start} and {@code after} count from a different moment than {@code after-end};</li>
+     *   <li>{@code concurrent-*} sets no order at all.</li>
+     * </ul>
+     *
+     * @throws IllegalArgumentException naming each {@code relatedAction} with another relationship
+     */
+    public void validateRelationships(PlanDefinition planDefinition) {
+        Flattened flattened = flatten(planDefinition);
+        List<String> offenders = new ArrayList<>();
+        for (Map.Entry<String, List<RelatedStepInfo>> node
+                : declaredEdges(flattened.steps(), flattened.groups()).entrySet()) {
+            for (RelatedStepInfo edge : node.getValue()) {
+                if (edge.relationship() != null && !"after-end".equals(edge.relationship())) {
+                    offenders.add("action '" + node.getKey() + "' -> '" + edge.actionId()
+                            + "' (relationship=" + edge.relationship() + ")");
+                }
+            }
+        }
+        if (!offenders.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Only the after-end relatedAction relationship is supported, and no relationship means "
+                            + "after-end. Write the relatedAction on the later step, naming the step it follows: "
+                            + String.join("; ", offenders));
         }
     }
 

@@ -963,6 +963,52 @@ class PlanDefinitionParserTest {
         assertDoesNotThrow(() -> parser.validateActionIds(pd));
     }
 
+    // ── Only after-end relationships ──
+
+    private PlanDefinition twoSteps(PlanDefinition.ActionRelationshipType relationship) {
+        PlanDefinition pd = new PlanDefinition();
+        stepAction(pd.addAction(), "registration");
+        PlanDefinition.PlanDefinitionActionComponent visit = stepAction(pd.addAction(), "visit");
+        PlanDefinition.PlanDefinitionActionRelatedActionComponent related = visit.addRelatedAction().setActionId("registration");
+        if (relationship != null) {
+            related.setRelationship(relationship);
+        }
+        return pd;
+    }
+
+    @Test
+    void validateRelationships_afterEndAndNoRelationship_areAccepted() {
+        assertDoesNotThrow(() -> parser.validateRelationships(twoSteps(PlanDefinition.ActionRelationshipType.AFTEREND)));
+        assertDoesNotThrow(() -> parser.validateRelationships(twoSteps(null)));
+    }
+
+    @Test
+    void validateRelationships_anyOtherRelationship_isRefused() {
+        for (PlanDefinition.ActionRelationshipType relationship : List.of(
+                PlanDefinition.ActionRelationshipType.AFTER,
+                PlanDefinition.ActionRelationshipType.AFTERSTART,
+                PlanDefinition.ActionRelationshipType.BEFORE,
+                PlanDefinition.ActionRelationshipType.BEFOREEND,
+                PlanDefinition.ActionRelationshipType.CONCURRENT,
+                PlanDefinition.ActionRelationshipType.CONCURRENTWITHSTART)) {
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                    () -> parser.validateRelationships(twoSteps(relationship)), relationship.toCode());
+            assertTrue(ex.getMessage().contains("action 'visit' -> 'registration' (relationship="
+                    + relationship.toCode() + ")"), ex.getMessage());
+            assertTrue(ex.getMessage().contains("Only the after-end relatedAction relationship is supported"),
+                    ex.getMessage());
+        }
+    }
+
+    @Test
+    void validateRelationships_theFixtureProtocols_useOnlyAfterEnd() throws IOException {
+        for (String fixture : List.of("/fhir/emr-service-protocol-nested.json", "/fhir/kenya-sha-emr-service-protocol.json",
+                "/fhir/plan-definition-ebuzima-outpatient-workflow.json")) {
+            PlanDefinition pd = parser.parse(loadFixture(fixture));
+            assertDoesNotThrow(() -> parser.validateRelationships(pd), fixture);
+        }
+    }
+
     // ── Optional steps must not declare deadlines ──
 
     @Test
@@ -1373,14 +1419,10 @@ class PlanDefinitionParserTest {
     }
 
     @Test
-    void findUnorderedRelationships_andFindDanglingRelatedActions_reportInertEdges() {
+    void findDanglingRelatedActions_reportsARelatedActionToAnUnknownAction() {
         List<PlanDefinitionParser.StepMetadata> steps =
-                List.of(step("a", edge("b", "concurrent", "0"), edge("ghost", "after-end", "0")),
+                List.of(step("a", edge("b", "after-end", "0"), edge("ghost", "after-end", "0")),
                         step("b"));
-
-        List<String> unordered = PlanDefinitionParser.findUnorderedRelationships(steps, List.of());
-        assertEquals(1, unordered.size());
-        assertTrue(unordered.get(0).contains("concurrent"), unordered.get(0));
 
         List<String> dangling = PlanDefinitionParser.findDanglingRelatedActions(steps, List.of());
         assertEquals(1, dangling.size());
