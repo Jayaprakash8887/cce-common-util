@@ -48,6 +48,21 @@ So a step's own `relatedAction` list names **what it waits for**, not what waits
 `after-end` is the default. A `relatedAction` with **no** `relationship` is read as `after-end`, so
 it can be left out.
 
+### `relatedAction` and step groups
+
+A step group is a set of steps that belong together, such as one visit (see §3). A `relatedAction` can be
+on a group, on a step inside a group, or point at a group. What is supported:
+
+| What | Example | Loads? | What happens |
+|---|---|---|---|
+| A group follows a step. The `relatedAction` is on the group | `visit-2`, 6 weeks after `registration` | Yes | The visit is due 6 weeks after registration is done. Its first steps take that due date |
+| A step inside a group follows a step outside it | `visit { bp, 7 days after registration }` | Yes | The order works. But the offset is not used when the step waits on nothing inside the group: the step takes the group's due date. The exception is an `entry-step` group's entry step, which keeps its own offset |
+| A step follows a group. The `relatedAction` names the group | `referral`, after `visit-2` | No | CCE can't tell yet when a group is done, so the step would never be created. For now, name a step inside the group instead |
+| A group follows a group | `visit-3`, 4 weeks after `visit-2` | No | The same reason. For now, name a step inside `visit-2` instead |
+
+The two refused rows will be allowed once CCE records when a group is complete, or is closed without
+completing. `validateGroups` refuses them until then.
+
 ### A `relatedAction` to a step that doesn't exist
 
 A `relatedAction` can name an `actionId` that no step in the protocol has, for example after a typo. It
