@@ -66,6 +66,11 @@ A `relatedAction` naming an `actionId` that no action declares is reported by
 `findDanglingRelatedActions`. Like `concurrent-*`, it is a warning rather than a rejection: both
 shapes were accepted before, so failing the load would break an upstream publisher.
 
+A step inside a `calendar-day` group may follow an action outside the group. The edge still orders the
+step, but its offset sets no due date: each visit creates the step when it opens, with the visit's due
+date. `findOffsetsIgnoredInCalendarDayGroups` reports a non-zero offset of this kind, as a warning. To
+give the first visit a deadline, put the `relatedAction` on the `calendar-day` group itself.
+
 ---
 
 ## 2. Status vocabularies
