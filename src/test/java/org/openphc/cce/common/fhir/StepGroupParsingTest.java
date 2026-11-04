@@ -605,17 +605,28 @@ class StepGroupParsingTest {
             triggeredStep(pd.addAction(), "registration", "1");
             namingEntryStep(pd.getAction().get(0), "registration");
 
-            assertRejected(pd, "Group 'consultation' names 'registration' as its entry step, which is not a step directly in it");
+            assertRejected(pd, "Group 'consultation' names 'registration' as its entry step, which is not a step inside it");
         }
 
         @Test
-        void namingAStepInANestedGroupIsRejected() {
+        void aStepInANestedGroupCanBeTheEntryStep() {
             PlanDefinition pd = consultationOfHistoryAndBp();
             PlanDefinitionActionComponent intake = group(pd.getAction().get(0).addAction(), "intake", "must");
             triggeredStep(intake.addAction(), "weight", "29463-7");
             namingEntryStep(pd.getAction().get(0), "weight");
 
-            assertRejected(pd, "Group 'consultation' names 'weight' as its entry step, which is not a step directly in it");
+            assertDoesNotThrow(() -> parser.validateGroups(pd));
+            assertEquals("weight", parser.extractGroups(pd).get(0).entryStepId());
+        }
+
+        @Test
+        void namingANestedGroupIsRejected() {
+            PlanDefinition pd = consultationOfHistoryAndBp();
+            PlanDefinitionActionComponent intake = group(pd.getAction().get(0).addAction(), "intake", "must");
+            triggeredStep(intake.addAction(), "weight", "29463-7");
+            namingEntryStep(pd.getAction().get(0), "intake");
+
+            assertRejected(pd, "Group 'consultation' names 'intake' as its entry step, which is not a step inside it");
         }
 
         @Test

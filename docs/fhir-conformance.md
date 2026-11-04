@@ -152,8 +152,9 @@ exactly once:
 FHIR's `Timing.repeat` only describes calendar repetition, so it has no way to say "a new cycle each
 visit"; hence the extension. `validateGroups` rejects any other code, the extension on an action that
 is not a group, and a `calendar-day` group inside another repeating group. It rejects an `entry-step`
-group without exactly one `cycle-entry-step`, with no `valueId`, or naming anything but a step directly
-in the group with no predecessor inside it, and `cycle-entry-step` on any other action.
+group without exactly one `cycle-entry-step`, or with no `valueId`. The entry step must be a step inside
+the group, directly or in a nested group, with no predecessor inside the group. `validateGroups` rejects
+any other name, and `cycle-entry-step` on any other action.
 
 ---
 
