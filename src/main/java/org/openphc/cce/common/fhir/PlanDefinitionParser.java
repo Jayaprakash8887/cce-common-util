@@ -576,7 +576,8 @@ public class PlanDefinitionParser {
      * completion rule; an optional group carries no deadline, as an optional step carries none; and nor
      * does a visit-driven ({@code cycle-boundary}) group, whose cycles have no planned due date. The
      * {@code cycle-boundary} extension is only on a group, with {@code calendar-day} or {@code entry-step};
-     * a group inside a repeating group repeats only by {@code entry-step}; and an {@code entry-step} group
+     * a {@code calendar-day} group is never inside a group that repeats by {@code calendar-day} or on a
+     * schedule, at any depth; and an {@code entry-step} group
      * names its entry step, a step inside it at any depth with no predecessor inside it, in exactly one
      * {@code cycle-entry-step} extension, which no other action carries.
      *
@@ -616,8 +617,12 @@ public class PlanDefinitionParser {
         }
     }
 
+    /**
+     * @param insideDailyOrScheduledGroup whether a group around {@code action}, at any depth, repeats by
+     *                                    {@code calendar-day} or on a schedule
+     */
     private void validateGroupsIn(PlanDefinition.PlanDefinitionActionComponent action,
-                                  boolean insideRepeatingGroup) {
+                                  boolean insideDailyOrScheduledGroup) {
         if (isIntelligenceAction(action)) {
             if (hasLogicalGrouping(action)) {
                 throw new IllegalArgumentException(
@@ -629,7 +634,7 @@ public class PlanDefinitionParser {
         }
         boolean group = isGroup(action);
         if (group) {
-            validateGroup(action, insideRepeatingGroup);
+            validateGroup(action, insideDailyOrScheduledGroup);
         } else if (action.getExtensionByUrl(CYCLE_BOUNDARY_EXTENSION_URL) != null) {
             throw new IllegalArgumentException(
                     "Action '" + action.getId() + "' declares the cycle-boundary extension but is not a step "
@@ -639,14 +644,14 @@ public class PlanDefinitionParser {
                     "Action '" + action.getId() + "' declares the cycle-entry-step extension but is not a step "
                             + "group. Put it on the entry-step group, naming the step that starts its cycles.");
         }
-        boolean repeating = group
-                && (action.hasTiming() || action.getExtensionByUrl(CYCLE_BOUNDARY_EXTENSION_URL) != null);
+        boolean dailyOrScheduled = group && (action.hasTiming()
+                || CycleBoundary.CALENDAR_DAY.code().equals(extractCodeExtension(action, CYCLE_BOUNDARY_EXTENSION_URL)));
         for (PlanDefinition.PlanDefinitionActionComponent nested : action.getAction()) {
-            validateGroupsIn(nested, insideRepeatingGroup || repeating);
+            validateGroupsIn(nested, insideDailyOrScheduledGroup || dailyOrScheduled);
         }
     }
 
-    private void validateGroup(PlanDefinition.PlanDefinitionActionComponent group, boolean insideRepeatingGroup) {
+    private void validateGroup(PlanDefinition.PlanDefinitionActionComponent group, boolean insideDailyOrScheduledGroup) {
         String id = group.getId();
         if (group.hasTrigger()) {
             throw new IllegalArgumentException(
@@ -691,7 +696,7 @@ public class PlanDefinitionParser {
         }
         Extension cycleBoundary = group.getExtensionByUrl(CYCLE_BOUNDARY_EXTENSION_URL);
         if (cycleBoundary != null) {
-            validateCycleBoundary(id, cycleBoundary, insideRepeatingGroup);
+            validateCycleBoundary(id, cycleBoundary, insideDailyOrScheduledGroup);
         }
         validateCycleEntryStep(id, group, cycleBoundary);
         for (PlanDefinition.PlanDefinitionActionComponent nested : group.getAction()) {
@@ -704,17 +709,20 @@ public class PlanDefinitionParser {
         }
     }
 
-    private static void validateCycleBoundary(String groupId, Extension extension, boolean insideRepeatingGroup) {
+    private static void validateCycleBoundary(String groupId, Extension extension,
+                                              boolean insideDailyOrScheduledGroup) {
         String code = extension.getValue() instanceof CodeType codeType ? codeType.getCode() : null;
         CycleBoundary boundary = CycleBoundary.fromCode(code).orElseThrow(() -> new IllegalArgumentException(
                 "Group '" + groupId + "' has the cycle-boundary extension with "
                         + (code == null ? "no valueCode" : "the code '" + code + "'")
                         + ". Supported codes: calendar-day, entry-step."));
-        if (insideRepeatingGroup && boundary != CycleBoundary.ENTRY_STEP) {
+        // Inside an entry-step group, whose cycle can span many days, a calendar-day group is a visit in an
+        // episode: allowed.
+        if (insideDailyOrScheduledGroup && boundary == CycleBoundary.CALENDAR_DAY) {
             throw new IllegalArgumentException(
-                    "Group '" + groupId + "' repeats by " + boundary.code() + " inside another repeating group. "
-                            + "Every event of one visit falls on the same day, so a group inside a repeating "
-                            + "group can only repeat by entry-step.");
+                    "Group '" + groupId + "' repeats by calendar-day inside a group that repeats by calendar-day "
+                            + "or on a schedule. Each of that group's cycles is one day or one period, so this group "
+                            + "could never reach a second day; it can repeat by entry-step instead.");
         }
     }
 

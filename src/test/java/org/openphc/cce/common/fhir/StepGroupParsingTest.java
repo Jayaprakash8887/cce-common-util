@@ -524,9 +524,39 @@ class StepGroupParsingTest {
         }
 
         @Test
-        void aCalendarDayGroupInsideARepeatingGroupIsRejected() {
+        void aCalendarDayGroupInsideACalendarDayGroupIsRejected() {
             assertRejected(journeyProtocol("calendar-day"),
-                    "Group 'consultation' repeats by calendar-day inside another repeating group");
+                    "Group 'consultation' repeats by calendar-day inside a group that repeats by calendar-day");
+        }
+
+        /** A pregnancy repeating by entry step, holding an ANC visit; the visit's boundary is given. */
+        private PlanDefinition pregnancyProtocol(String visitBoundary) {
+            PlanDefinition pd = new PlanDefinition();
+            PlanDefinitionActionComponent pregnancy =
+                    namingEntryStep(repeatingBy(group(pd.addAction(), "pregnancy", "must"), "entry-step"), "registration");
+            triggeredStep(pregnancy.addAction(), "registration", "1");
+            PlanDefinitionActionComponent visit = repeatingBy(group(pregnancy.addAction(), "visit", "must"), visitBoundary);
+            triggeredStep(visit.addAction(), "bp", "85354-9");
+            return pd;
+        }
+
+        @Test
+        void aCalendarDayGroupInsideAnEntryStepGroupLoads() {
+            assertDoesNotThrow(() -> parser.validateGroups(pregnancyProtocol("calendar-day")));
+        }
+
+        @Test
+        void aCalendarDayGroupInsideAnEntryStepGroupInsideACalendarDayGroupIsRejected() {
+            PlanDefinition pd = new PlanDefinition();
+            PlanDefinitionActionComponent journey = repeatingBy(group(pd.addAction(), "journey", "must"), "calendar-day");
+            triggeredStep(journey.addAction(), "check-in", "1");
+            PlanDefinitionActionComponent consultation =
+                    namingEntryStep(repeatingBy(group(journey.addAction(), "consultation", "must"), "entry-step"), "history");
+            triggeredStep(consultation.addAction(), "history", "2");
+            PlanDefinitionActionComponent round = repeatingBy(group(consultation.addAction(), "round", "must"), "calendar-day");
+            triggeredStep(round.addAction(), "bp", "85354-9");
+
+            assertRejected(pd, "Group 'round' repeats by calendar-day inside a group that repeats by calendar-day");
         }
 
         @Test

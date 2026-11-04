@@ -54,7 +54,7 @@ public class StepGroupInstance {
     private int cycleIndex = 0;
 
     /**
-     * When the instance's entry steps are due, as its predecessor, its parent or its schedule sets it.
+     * When the steps created with the instance are due, as its predecessor, its parent or its schedule sets it.
      * Never the time of the event that happened to open it. Null when no planned due date can be worked
      * out.
      */
