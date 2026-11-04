@@ -305,34 +305,6 @@ class StepGroupParsingTest {
 
             assertEquals(List.of("action 'referral' -> unknown action 'no-such-action'"), dangling);
         }
-
-        @Test
-        void anOffsetToAStepOutsideACalendarDayGroup_isReportedAsIgnored() {
-            PlanDefinition pd = new PlanDefinition();
-            triggeredStep(pd.addAction(), "registration", "1");
-            PlanDefinitionActionComponent journey = repeatingBy(group(pd.addAction(), "journey", "must"), "calendar-day");
-            triggeredStep(journey.addAction(), "check-in", "2");
-            after(triggeredStep(journey.addAction(), "consent", "3"), "registration", 2);   // reported
-            after(triggeredStep(journey.addAction(), "id-check", "4"), "registration", 0);  // ordering only
-            after(triggeredStep(journey.addAction(), "vitals", "5"), "check-in", 1);         // inside the visit
-            PlanDefinitionActionComponent triage = group(journey.addAction(), "triage", "must");
-            after(triggeredStep(triage.addAction(), "pain-score", "6"), "registration", 1); // reported, nested
-
-            List<String> ignored = PlanDefinitionParser.findOffsetsIgnoredInCalendarDayGroups(
-                    parser.extractSteps(pd), parser.extractGroups(pd));
-
-            assertEquals(List.of(
-                    "step 'consent' in calendar-day group 'journey' -> 'registration' (offset 2 d)",
-                    "step 'pain-score' in calendar-day group 'journey' -> 'registration' (offset 1 d)"), ignored);
-        }
-
-        @Test
-        void aStepInAGroupWithoutCalendarDay_isNotReported() {
-            List<String> ignored = PlanDefinitionParser.findOffsetsIgnoredInCalendarDayGroups(
-                    parser.extractSteps(reviewProtocol()), parser.extractGroups(reviewProtocol()));
-
-            assertTrue(ignored.isEmpty(), ignored::toString);
-        }
     }
 
     @Nested

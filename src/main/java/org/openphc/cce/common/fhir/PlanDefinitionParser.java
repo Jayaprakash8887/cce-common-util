@@ -316,41 +316,6 @@ public class PlanDefinitionParser {
         return found;
     }
 
-    /**
-     * Describe every step inside a {@code calendar-day} group that has a {@code relatedAction} with an
-     * offset to an action outside that group. The {@code relatedAction} still sets the order: order
-     * violations and backfill follow it. But the offset never sets the step's due date. A visit opens on the day the
-     * patient comes, never in advance, and creates the step with the visit's own due date. Reported at
-     * load so an author doesn't believe a deadline is in effect; to give the first visit one, put the
-     * {@code relatedAction} on the {@code calendar-day} group itself.
-     */
-    public static List<String> findOffsetsIgnoredInCalendarDayGroups(List<StepMetadata> steps,
-                                                                     List<GroupMetadata> groups) {
-        List<String> found = new ArrayList<>();
-        for (StepMetadata step : steps) {
-            for (String groupId = step.groupId(); groupId != null; ) {
-                GroupMetadata group = findGroup(groups, groupId);
-                if (group == null) {
-                    break;
-                }
-                if (group.cycleBoundary() == CycleBoundary.CALENDAR_DAY) {
-                    Set<String> inside = descendantIds(group.id(), steps, groups);
-                    for (RelatedStepInfo edge : step.relatedSteps()) {
-                        boolean hasOffset = edge.offsetValue() != null && edge.offsetValue().signum() != 0;
-                        if (hasOffset && edge.actionId() != null && !inside.contains(edge.actionId())) {
-                            found.add("step '" + step.id() + "' in calendar-day group '" + group.id() + "' -> '"
-                                    + edge.actionId() + "' (offset " + edge.offsetValue().stripTrailingZeros()
-                                    .toPlainString() + " " + edge.offsetUnit() + ")");
-                        }
-                    }
-                    break; // a step has at most one calendar-day group around it
-                }
-                groupId = group.parentGroupId();
-            }
-        }
-        return found;
-    }
-
     /** Each step's and group's declared {@code relatedAction} edges, keyed by its action id. */
     private static Map<String, List<RelatedStepInfo>> declaredEdges(List<StepMetadata> steps,
                                                                     List<GroupMetadata> groups) {

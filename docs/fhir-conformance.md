@@ -56,7 +56,7 @@ on a group, on a step inside a group, or point at a group. What is supported:
 | What | Example | Loads? | What happens |
 |---|---|---|---|
 | A group follows a step. The `relatedAction` is on the group | `visit-2`, 6 weeks after `registration` | Yes | The visit is due 6 weeks after registration is done. Its first steps take that due date |
-| A step inside a group follows a step outside it | `visit { bp, 7 days after registration }` | Yes | The order works. But the offset is not used when the step waits on nothing inside the group: the step takes the group's due date. The exception is an `entry-step` group's entry step, which keeps its own offset |
+| A step inside a group follows a step outside it | `visit { bp, 7 days after registration }` | Yes | The order works, and the step keeps its own offset, like a step in no group. In a repeating group, only the first cycle uses the offset (see below) |
 | A step follows a group. The `relatedAction` names the group | `referral`, after `visit-2` | No | CCE can't tell yet when a group is done, so the step would never be created. For now, name a step inside the group instead |
 | A group follows a group | `visit-3`, 4 weeks after `visit-2` | No | The same reason. For now, name a step inside `visit-2` instead |
 
@@ -71,36 +71,28 @@ then sets no order. `findDanglingRelatedActions` reports each one when the proto
 This is a warning, not an error. The protocol still loads. It was accepted before, so refusing it now
 would break a system that already sends such protocols.
 
-### A step in a `calendar-day` group that follows a step outside the group
+### A step in a group that follows a step outside the group
 
-A `relatedAction` does two things. It says which step comes first, and its offset says when the step is
-due. Inside a `calendar-day` group, only the first works when the earlier step is outside the group.
+A group's first steps are the ones that wait on nothing inside the group. Such a step can still follow a
+step outside the group. It then keeps its own offset, like a step that is in no group.
 
-Example: a patient journey that repeats each day the patient comes, with a consent inside it. The consent
-says "2 days after registration", and registration is outside the journey.
+Example: a visit with a BP that is due 7 days after registration, where registration is outside the visit.
 
 ```
 registration
-journey [cycle-boundary: calendar-day] {
-  check-in
-  consent   (relatedAction: after registration, offset 2 days)
+visit {
+  bp       (relatedAction: after-end registration, offset 7 days)
+  weight
 }
 ```
 
-- **The order still works.** A consent recorded before registration is reported as an order violation.
-  A consent recorded with no registration at all makes CCE create the missing registration step.
-- **The offset is not used.** A visit only starts when the patient comes, never in advance. When it
-  starts, it creates the consent with the visit's own due date. "Registration plus 2 days" is never
-  used, so the consent's `tolerance-days` never applies either.
-- **The consent is created again in every visit.** A step that should happen only once belongs outside
-  the journey.
-
-`findOffsetsIgnoredInCalendarDayGroups` finds every such offset. The protocol service logs a warning for
-each one when it loads the PlanDefinition. The load still succeeds. An offset of zero is not reported,
-since it only sets the order. Neither is a `relatedAction` to a step inside the same group.
-
-To give the first visit a deadline, put the `relatedAction` on the `calendar-day` group itself, for
-example "journey: 2 days after registration". The journey's first cycle then takes that as its due date.
+- **Registration is done:** BP is due 7 days after it. This is BP's own offset, even if the visit has a
+  due date of its own. Weight follows nothing, so it takes the visit's due date.
+- **Registration isn't done yet:** BP isn't created when the visit opens. It is created when registration
+  is done, due 7 days later.
+- **A visit that repeats** (`cycle-boundary`): only the first visit uses the offset. A later visit means the
+  patient came back, so "registration + 7 days" would already be past. BP is then created with no due
+  date. A step that should happen only once belongs outside the repeating group.
 
 ---
 

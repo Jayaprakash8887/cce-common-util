@@ -112,7 +112,6 @@ metadata and need no FHIR context.
 | `classifyRelationship(String)` | a FHIR relationship code → `AFTER` / `BEFORE` / `UNORDERED`. Only `after-end` loads now; the others are still read for protocols stored before that check |
 | `findStep`, `computeMustPredecessorSteps`, `mustStepIds` | graph queries used for ordering checks and backfill. `computeMustPredecessorSteps` also follows what a step's enclosing groups wait on, so a step in ANC visit 2 has registration as a predecessor when the visit follows registration |
 | `findDanglingRelatedActions` | load-time warning for a `relatedAction` naming an action the protocol doesn't have |
-| `findOffsetsIgnoredInCalendarDayGroups` | load-time diagnostic for an offset that sets no due date: on a step inside a `calendar-day` group, to an action outside it |
 | `buildTriggerIndexEntries(PlanDefinition, UUID)` | the trigger index rows for a definition, as persistence-agnostic `TriggerIndexEntry` records |
 | `extractConditionOnlyTriggers(PlanDefinition)` | triggers with a condition but no `data[]`, evaluated in memory |
 | `validateActionIds`, `validateActionTypes`, `validateTriggers`, `validateGroups` | load-time rejection of definitions that cannot work; `validateGroups` also refuses group features that are not built yet |
