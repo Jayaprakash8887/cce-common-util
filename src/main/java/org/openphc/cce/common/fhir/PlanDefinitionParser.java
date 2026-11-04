@@ -577,7 +577,7 @@ public class PlanDefinitionParser {
      * does a visit-driven ({@code cycle-boundary}) group, whose cycles have no planned due date. The
      * {@code cycle-boundary} extension is only on a group, with {@code calendar-day} or {@code entry-step};
      * a group inside a repeating group repeats only by {@code entry-step}; and an {@code entry-step} group
-     * names its entry step, a step directly in it with no predecessor inside it, in exactly one
+     * names its entry step, a step inside it at any depth with no predecessor inside it, in exactly one
      * {@code cycle-entry-step} extension, which no other action carries.
      *
      * <p>Rules that hold until the feature behind them is built: no {@code timing} on a group (scheduled
@@ -749,7 +749,7 @@ public class PlanDefinitionParser {
         }
     }
 
-    // An entry step must be able to start a cycle: a step directly in the group, waiting on nothing in it.
+    // An entry step must be able to start a cycle: a step inside the group, at any depth, waiting on nothing in it.
     private static void rejectEntryStepsThatCannotStartACycle(List<StepMetadata> steps, List<GroupMetadata> groups,
                                                               DependencyGraph graph) {
         for (GroupMetadata group : groups) {
@@ -757,14 +757,15 @@ public class PlanDefinitionParser {
             if (entryStepId == null) {
                 continue;
             }
-            boolean isMemberStep = memberSteps(group.id(), steps).stream().anyMatch(s -> entryStepId.equals(s.id()));
-            if (!isMemberStep) {
+            Set<String> inside = descendantIds(group.id(), steps, groups);
+            boolean isStepInside = inside.contains(entryStepId)
+                    && steps.stream().anyMatch(s -> entryStepId.equals(s.id()));
+            if (!isStepInside) {
                 throw new IllegalArgumentException(
                         "Group '" + group.id() + "' names '" + entryStepId + "' as its entry step, which is not "
-                                + "a step directly in it. An entry step is one of the group's own steps, not "
-                                + "a group or a step in a nested group.");
+                                + "a step inside it. An entry step is a step in the group or in one of its nested "
+                                + "groups, not a group or a step outside it.");
             }
-            Set<String> inside = descendantIds(group.id(), steps, groups);
             if (graph.predecessorsOf(entryStepId).stream().anyMatch(inside::contains)) {
                 throw new IllegalArgumentException(
                         "Group '" + group.id() + "' names '" + entryStepId + "' as its entry step, but it "
