@@ -334,8 +334,8 @@ public class PlanDefinitionParser {
 
     /**
      * Describe every step inside a {@code calendar-day} group that has a {@code relatedAction} with an
-     * offset to an action outside that group. The edge still orders the step: order violations and
-     * backfill follow it. But the offset never sets the step's due date. A visit opens on the day the
+     * offset to an action outside that group. The {@code relatedAction} still sets the order: order
+     * violations and backfill follow it. But the offset never sets the step's due date. A visit opens on the day the
      * patient comes, never in advance, and creates the step with the visit's own due date. Reported at
      * load so an author doesn't believe a deadline is in effect; to give the first visit one, put the
      * {@code relatedAction} on the {@code calendar-day} group itself.

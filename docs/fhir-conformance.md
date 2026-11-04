@@ -66,10 +66,37 @@ A `relatedAction` naming an `actionId` that no action declares is reported by
 `findDanglingRelatedActions`. Like `concurrent-*`, it is a warning rather than a rejection: both
 shapes were accepted before, so failing the load would break an upstream publisher.
 
-A step inside a `calendar-day` group may follow an action outside the group. The edge still orders the
-step, but its offset sets no due date: each visit creates the step when it opens, with the visit's due
-date. `findOffsetsIgnoredInCalendarDayGroups` reports a non-zero offset of this kind, as a warning. To
-give the first visit a deadline, put the `relatedAction` on the `calendar-day` group itself.
+#### A step in a `calendar-day` group that follows a step outside the group
+
+A `relatedAction` does two things. It says which step must come first, and its offset says when the
+step is due. Inside a `calendar-day` group, only the first works when the earlier step is outside the
+group.
+
+Example: a patient journey that repeats each day the patient comes, with a consent inside it. The consent
+says "2 days after registration", and registration is outside the journey.
+
+```
+registration
+journey [cycle-boundary: calendar-day] {
+  check-in
+  consent   (relatedAction: after registration, offset 2 days)
+}
+```
+
+- **The order still works.** A consent recorded before registration is reported as an order violation.
+  A consent recorded with no registration at all makes CCE create the missing registration step.
+- **The offset is not used.** A visit only starts when the patient comes, never in advance. When it
+  starts, it creates the consent with the visit's own due date. "Registration plus 2 days" is never
+  used, so the consent's `tolerance-days` never applies either.
+- **The consent is created again in every visit.** A step that should happen only once belongs outside
+  the journey.
+
+`findOffsetsIgnoredInCalendarDayGroups` finds every such offset. The protocol service logs a warning for
+each one when it loads the PlanDefinition. The load still succeeds. An offset of zero is not reported,
+since it only sets the order. Neither is a `relatedAction` to a step inside the same group.
+
+To give the first visit a deadline, put the `relatedAction` on the `calendar-day` group itself, for
+example "journey: 2 days after registration". The journey's first cycle then takes that as its due date.
 
 ---
 
