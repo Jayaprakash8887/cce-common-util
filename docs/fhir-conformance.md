@@ -48,23 +48,6 @@ So a step's own `relatedAction` list names **what it waits for**, not what waits
 `after-end` is the default. A `relatedAction` with **no** `relationship` is read as `after-end`, so
 it can be left out.
 
-### Other relationships are refused
-
-FHIR has other `relationship` codes. CCE refuses all of them when the protocol is loaded:
-
-| `relationship` | Why it is refused |
-|---|---|
-| `after`, `after-start` | They count from a different moment than `after-end`. One rule is easier to follow. |
-| `before`, `before-start`, `before-end` | They say the same order from the other step. A protocol that mixes both ways is easy to read backwards. |
-| `concurrent`, `concurrent-with-start`, `concurrent-with-end` | They set no order at all, so they would neither create the next step nor check the order. |
-
-`validateRelationships` refuses each one, and says how to fix it: write the `relatedAction` on the later
-step, naming the step it follows, with `after-end` or no `relationship`. For example, instead of
-`visit-encounter` "before" `vitals-recording`, write on `vitals-recording`: "`after-end` `visit-encounter`".
-
-A protocol stored before this check still works as it did. CCE still reads the old relationships the way
-it always has.
-
 ### A `relatedAction` to a step that doesn't exist
 
 A `relatedAction` can name an `actionId` that no step in the protocol has, for example after a typo. It
