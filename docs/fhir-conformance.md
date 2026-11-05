@@ -55,7 +55,7 @@ on a group, on a step inside a group, or point at a group. What is supported:
 
 | What | Example | Loads? | What happens |
 |---|---|---|---|
-| A group follows a step. The `relatedAction` is on the group | `visit-2`, 6 weeks after `registration` | Yes | The visit is due 6 weeks after registration is done. Its first steps take that due date. A nested group follows the same rules as a step inside a group (see below) |
+| A group follows a step. The `relatedAction` is on the group | `visit-2`, 6 weeks after `registration` | Yes | The visit is due 6 weeks after registration is done, and its first steps take that due date. But registration completing doesn't open it: every group is optional for now (see §3). To have its steps expected after registration, put the `relatedAction` on them |
 | A step inside a group follows a step outside it | `visit { bp, 7 days after registration }` | Yes | The order works, and the step keeps its own offset, like a step in no group. In a repeating group, only the first cycle uses the offset (see below) |
 | A step follows a group. The `relatedAction` names the group | `referral`, after `visit-2` | No | CCE can't tell yet when a group is done, so the step would never be created. For now, name a step inside the group instead |
 | A group follows a group | `visit-3`, 4 weeks after `visit-2` | No | The same reason. For now, name a step inside `visit-2` instead |
@@ -101,19 +101,19 @@ it follows. In `pregnancy { registration; visit { bp, 7 days after registration 
 repeats, each pregnancy has its own registration. So the first visit of the second pregnancy uses the
 offset again.
 
-A **nested group** that follows a step outside its parent works the same way:
+A **nested group** that follows a step outside its parent gets its due date the same way:
 
 ```
 registration
 visit {
-  lab  (relatedAction: after-end registration, offset 7 days) { lab-order }
+  lab  (relatedAction: after-end registration, offset 7 days) { lab-order; lab-note }
 }
 ```
 
-- **Registration is done:** in the first visit, `lab` is due 7 days after it, and so is `lab-order`.
-- **Registration isn't done yet:** `lab` doesn't open with the visit. It opens when registration is done,
-  due 7 days later.
-- **A later visit:** `lab` opens with the visit with no due date, and so does `lab-order`.
+`lab` is optional, as every group is for now, so it opens on an event for one of its steps. Say a
+`lab-order` event opens it:
+- **in the first visit,** `lab` is due 7 days after registration, and so is `lab-note`;
+- **in a later visit,** `lab` has no due date, and nor does `lab-note`.
 
 ---
 
@@ -176,6 +176,22 @@ of steps that belong together clinically, such as one visit.
 - `visual-group` and `sentence-group` only affect how a protocol is displayed. An action with either is
   an ordinary step.
 
+**For now, every group is optional.** A group can't have `requiredBehavior`. Its steps keep their own.
+Mandatory groups come in a later phase. So a group never opens with its parent, or when a step it follows
+completes. It opens on an event for one of its steps, or when CCE creates one of its `must` steps because
+a step they follow is done. To have a group's steps expected after an earlier step, put the
+`relatedAction` on those steps:
+
+```
+registration
+visit-2 {
+  bp      (must, relatedAction: after-end registration, offset 6 weeks)
+  weight  (must, relatedAction: after-end registration, offset 6 weeks)
+}
+```
+
+When registration is done, BP and weight are created, due 6 weeks later, and the visit opens to hold them.
+
 A group that repeats per visit says what starts a new cycle in a CCE extension:
 
 ```json
@@ -204,6 +220,7 @@ FHIR's `Timing.repeat` can only describe repeats on a calendar, such as every 3 
 new cycle each visit", so CCE uses its own extension.
 
 `validateGroups` refuses:
+- `requiredBehavior` on a group, for now;
 - any other `cycle-boundary` code;
 - `cycle-boundary` on an action that is not a group;
 - a `calendar-day` group inside another `calendar-day` group, at any depth;

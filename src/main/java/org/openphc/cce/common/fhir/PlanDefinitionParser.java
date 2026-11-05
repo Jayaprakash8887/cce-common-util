@@ -565,9 +565,10 @@ public class PlanDefinitionParser {
      * names its entry step, a step inside it at any depth with no predecessor inside it, in exactly one
      * {@code cycle-entry-step} extension, which no other action carries.
      *
-     * <p>Rules that hold until the feature behind them is built: no {@code timing} on a group (scheduled
-     * repeats), no {@code tolerance-days} on a group (group deadlines), no {@code fire-event} action on a
-     * group (intelligence on groups), and nothing that follows a group (group completion and closure).
+     * <p>Rules that hold until the feature behind them is built: no {@code requiredBehavior} on a group, so
+     * every group is optional (mandatory groups), no {@code timing} on a group (scheduled repeats), no
+     * {@code tolerance-days} on a group (group deadlines), no {@code fire-event} action on a group
+     * (intelligence on groups), and nothing that follows a group (group completion and closure).
      * Each is refused rather than ignored, so an author never believes a setting takes effect when it does
      * not.
      *
@@ -668,6 +669,13 @@ public class PlanDefinitionParser {
                     "Group '" + id + "' has the cycle-boundary extension and declares tolerance-days. A "
                             + "visit-driven cycle opens when the patient comes back, so it has no planned "
                             + "due date for a deadline to count from; put tolerance-days on its steps.");
+        }
+        // The phase gates follow the permanent rules above, so lifting one never lets those through.
+        if (group.hasRequiredBehavior()) {
+            throw new IllegalArgumentException(
+                    "Group '" + id + "' declares requiredBehavior '" + group.getRequiredBehavior().toCode()
+                            + "'. Mandatory groups are not supported yet, so every group is optional: remove "
+                            + "requiredBehavior from the group. Its steps keep their own requiredBehavior.");
         }
         if (toleranceDays != null) {
             throw new IllegalArgumentException(

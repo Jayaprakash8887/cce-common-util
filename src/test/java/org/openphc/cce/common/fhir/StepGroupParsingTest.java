@@ -95,9 +95,9 @@ class StepGroupParsingTest {
      */
     private static PlanDefinition journeyProtocol(String consultationBoundary) {
         PlanDefinition pd = new PlanDefinition();
-        PlanDefinitionActionComponent journey = repeatingBy(group(pd.addAction(), "journey", "must"), "calendar-day");
+        PlanDefinitionActionComponent journey = repeatingBy(group(pd.addAction(), "journey", null), "calendar-day");
         triggeredStep(journey.addAction(), "check-in", "1");
-        PlanDefinitionActionComponent consultation = group(journey.addAction(), "consultation", "must");
+        PlanDefinitionActionComponent consultation = group(journey.addAction(), "consultation", null);
         if (consultationBoundary != null) {
             repeatingBy(consultation, consultationBoundary);
         }
@@ -118,7 +118,7 @@ class StepGroupParsingTest {
     private static PlanDefinition consultationOfHistoryAndBp() {
         PlanDefinition pd = new PlanDefinition();
         PlanDefinitionActionComponent consultation =
-                repeatingBy(group(pd.addAction(), "consultation", "must"), "entry-step");
+                repeatingBy(group(pd.addAction(), "consultation", null), "entry-step");
         triggeredStep(consultation.addAction(), "history", "10164-2");
         triggeredStep(consultation.addAction(), "bp", "85354-9");
         return pd;
@@ -132,12 +132,12 @@ class StepGroupParsingTest {
     }
 
     /**
-     * A quarterly-review shape: a mandatory group holding vitals (day 0), an HbA1c draw 3 days after
-     * vitals, and an optional consultation.
+     * A quarterly-review shape: a group holding vitals (day 0), an HbA1c draw 3 days after vitals, and an
+     * optional consultation.
      */
     private static PlanDefinition reviewProtocol() {
         PlanDefinition pd = new PlanDefinition();
-        PlanDefinitionActionComponent review = group(pd.addAction(), "review", "must");
+        PlanDefinitionActionComponent review = group(pd.addAction(), "review", null);
         triggeredStep(review.addAction(), "vitals", "85354-9");
         PlanDefinitionActionComponent hba1c = triggeredStep(review.addAction(), "hba1c", "4548-4");
         after(hba1c, "vitals", 3);
@@ -161,17 +161,17 @@ class StepGroupParsingTest {
             assertEquals(1, groups.size());
             assertEquals("review", groups.get(0).id());
             assertNull(groups.get(0).parentGroupId());
-            assertTrue(groups.get(0).isMandatory());
+            assertFalse(groups.get(0).isMandatory(), "a group with no requiredBehavior is optional");
         }
 
         @Test
         void eachStepNamesItsNearestGroup_throughPlainNesting() {
             PlanDefinition pd = new PlanDefinition();
-            PlanDefinitionActionComponent journey = group(pd.addAction(), "journey", "must");
+            PlanDefinitionActionComponent journey = group(pd.addAction(), "journey", null);
             PlanDefinitionActionComponent checkIn = triggeredStep(journey.addAction(), "check-in", "1");
             // A step nested under a step is flattened as before, but still belongs to the group.
             triggeredStep(checkIn.addAction(), "triage", "2");
-            PlanDefinitionActionComponent consultation = group(journey.addAction(), "consultation", "must");
+            PlanDefinitionActionComponent consultation = group(journey.addAction(), "consultation", null);
             triggeredStep(consultation.addAction(), "history", "3");
 
             List<StepMetadata> steps = parser.extractSteps(pd);
@@ -225,8 +225,8 @@ class StepGroupParsingTest {
         @Test
         void aStepNestedTwoGroupsDeepIsIndexed() {
             PlanDefinition pd = new PlanDefinition();
-            PlanDefinitionActionComponent journey = group(pd.addAction(), "journey", "must");
-            PlanDefinitionActionComponent consultation = group(journey.addAction(), "consultation", "must");
+            PlanDefinitionActionComponent journey = group(pd.addAction(), "journey", null);
+            PlanDefinitionActionComponent consultation = group(journey.addAction(), "consultation", null);
             triggeredStep(consultation.addAction(), "history", "11329-0");
 
             var entries = parser.buildTriggerIndexEntries(pd, UUID.randomUUID());
@@ -262,7 +262,7 @@ class StepGroupParsingTest {
         void aGroupFollowingAStepIsAGroupSuccessor() {
             PlanDefinition pd = new PlanDefinition();
             triggeredStep(pd.addAction(), "registration", "1");
-            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit-2", "must");
+            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit-2", null);
             after(visit, "registration", 42);
             triggeredStep(visit.addAction(), "bp", "2");
 
@@ -279,7 +279,7 @@ class StepGroupParsingTest {
         @Test
         void aStepFollowingAGroupIsAStepSuccessorOfTheGroup() {
             PlanDefinition pd = new PlanDefinition();
-            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit-2", "must");
+            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit-2", null);
             triggeredStep(visit.addAction(), "bp", "1");
             PlanDefinitionActionComponent referral = triggeredStep(pd.addAction(), "referral", "2");
             after(referral, "visit-2", 0);
@@ -294,7 +294,7 @@ class StepGroupParsingTest {
         @Test
         void aRelatedActionNamingAGroupIsNotDangling() {
             PlanDefinition pd = new PlanDefinition();
-            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit-2", "must");
+            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit-2", null);
             triggeredStep(visit.addAction(), "bp", "1");
             PlanDefinitionActionComponent referral = triggeredStep(pd.addAction(), "referral", "2");
             after(referral, "visit-2", 0);
@@ -326,6 +326,8 @@ class StepGroupParsingTest {
 
         @Test
         void aMemberWaitingOnAStepInANestedGroup_isNotCreatedOnOpen() {
+            // Mandatory groups are refused at load until a later phase (plan point 11). The parser keeps their
+            // rule for then, so it is tested here without the load checks.
             PlanDefinition pd = new PlanDefinition();
             PlanDefinitionActionComponent journey = group(pd.addAction(), "journey", "must");
             PlanDefinitionActionComponent consultation = group(journey.addAction(), "consultation", "must");
@@ -363,11 +365,11 @@ class StepGroupParsingTest {
             PlanDefinition pd = new PlanDefinition();
             triggeredStep(pd.addAction(), "registration", "1");
             triggeredStep(pd.addAction(), "leaflet", "2").setRequiredBehavior(ActionRequiredBehavior.COULD);
-            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit-2", "must");
+            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit-2", null);
             after(visit, "registration", 42);
             after(visit, "leaflet", 0);
             triggeredStep(visit.addAction(), "bp", "3");
-            PlanDefinitionActionComponent nutrition = group(visit.addAction(), "nutrition", "must");
+            PlanDefinitionActionComponent nutrition = group(visit.addAction(), "nutrition", null);
             after(triggeredStep(nutrition.addAction(), "diet", "4"), "bp", 0);
             after(triggeredStep(pd.addAction(), "treatment", "5"), "bp", 0);
             return pd;
@@ -437,8 +439,8 @@ class StepGroupParsingTest {
         @Test
         void aGroupWithNoStepIsRejected_evenThroughEmptyNestedGroups() {
             PlanDefinition pd = new PlanDefinition();
-            PlanDefinitionActionComponent outer = group(pd.addAction(), "outer", "must");
-            group(outer.addAction(), "inner", "must");
+            PlanDefinitionActionComponent outer = group(pd.addAction(), "outer", null);
+            group(outer.addAction(), "inner", null);
 
             assertRejected(pd, "contains no step");
         }
@@ -460,23 +462,23 @@ class StepGroupParsingTest {
         }
 
         @Test
-        void anOptionalGroupWithADeadlineIsRejected() {
-            PlanDefinition pd = reviewProtocol();
-            PlanDefinitionActionComponent review = pd.getAction().get(0);
-            review.setRequiredBehavior(ActionRequiredBehavior.COULD);
-            review.addExtension(new Extension(
-                    "http://openphc.org/fhir/StructureDefinition/tolerance-days", new IntegerType(14)));
+        void aGroupDeclaringRequiredBehaviorIsRejected_everyGroupIsOptionalForNow() {
+            for (ActionRequiredBehavior requiredBehavior : List.of(ActionRequiredBehavior.MUST, ActionRequiredBehavior.COULD)) {
+                PlanDefinition pd = reviewProtocol();
+                pd.getAction().get(0).setRequiredBehavior(requiredBehavior);
 
-            assertRejected(pd, "is optional");
+                assertRejected(pd, "Group 'review' declares requiredBehavior '" + requiredBehavior.toCode()
+                        + "'. Mandatory groups are not supported yet");
+            }
         }
 
         @Test
-        void aGroupDeadlineIsNotSupportedYet() {
+        void aGroupDeadlineIsRejected_aGroupIsOptional() {
             PlanDefinition pd = reviewProtocol();
             pd.getAction().get(0).addExtension(new Extension(
                     "http://openphc.org/fhir/StructureDefinition/tolerance-days", new IntegerType(14)));
 
-            assertRejected(pd, "Group deadlines are not supported yet");
+            assertRejected(pd, "is optional (requiredBehavior=<absent>) and declares tolerance-days");
         }
 
         @Test
@@ -533,9 +535,9 @@ class StepGroupParsingTest {
         private PlanDefinition pregnancyProtocol(String visitBoundary) {
             PlanDefinition pd = new PlanDefinition();
             PlanDefinitionActionComponent pregnancy =
-                    namingEntryStep(repeatingBy(group(pd.addAction(), "pregnancy", "must"), "entry-step"), "registration");
+                    namingEntryStep(repeatingBy(group(pd.addAction(), "pregnancy", null), "entry-step"), "registration");
             triggeredStep(pregnancy.addAction(), "registration", "1");
-            PlanDefinitionActionComponent visit = repeatingBy(group(pregnancy.addAction(), "visit", "must"), visitBoundary);
+            PlanDefinitionActionComponent visit = repeatingBy(group(pregnancy.addAction(), "visit", null), visitBoundary);
             triggeredStep(visit.addAction(), "bp", "85354-9");
             return pd;
         }
@@ -548,12 +550,12 @@ class StepGroupParsingTest {
         @Test
         void aCalendarDayGroupInsideAnEntryStepGroupInsideACalendarDayGroupIsRejected() {
             PlanDefinition pd = new PlanDefinition();
-            PlanDefinitionActionComponent journey = repeatingBy(group(pd.addAction(), "journey", "must"), "calendar-day");
+            PlanDefinitionActionComponent journey = repeatingBy(group(pd.addAction(), "journey", null), "calendar-day");
             triggeredStep(journey.addAction(), "check-in", "1");
             PlanDefinitionActionComponent consultation =
-                    namingEntryStep(repeatingBy(group(journey.addAction(), "consultation", "must"), "entry-step"), "history");
+                    namingEntryStep(repeatingBy(group(journey.addAction(), "consultation", null), "entry-step"), "history");
             triggeredStep(consultation.addAction(), "history", "2");
-            PlanDefinitionActionComponent round = repeatingBy(group(consultation.addAction(), "round", "must"), "calendar-day");
+            PlanDefinitionActionComponent round = repeatingBy(group(consultation.addAction(), "round", null), "calendar-day");
             triggeredStep(round.addAction(), "bp", "85354-9");
 
             assertRejected(pd, "Group 'round' repeats by calendar-day inside a group that repeats by calendar-day");
@@ -641,7 +643,7 @@ class StepGroupParsingTest {
         @Test
         void aStepInANestedGroupCanBeTheEntryStep() {
             PlanDefinition pd = consultationOfHistoryAndBp();
-            PlanDefinitionActionComponent intake = group(pd.getAction().get(0).addAction(), "intake", "must");
+            PlanDefinitionActionComponent intake = group(pd.getAction().get(0).addAction(), "intake", null);
             triggeredStep(intake.addAction(), "weight", "29463-7");
             namingEntryStep(pd.getAction().get(0), "weight");
 
@@ -652,7 +654,7 @@ class StepGroupParsingTest {
         @Test
         void namingANestedGroupIsRejected() {
             PlanDefinition pd = consultationOfHistoryAndBp();
-            PlanDefinitionActionComponent intake = group(pd.getAction().get(0).addAction(), "intake", "must");
+            PlanDefinitionActionComponent intake = group(pd.getAction().get(0).addAction(), "intake", null);
             triggeredStep(intake.addAction(), "weight", "29463-7");
             namingEntryStep(pd.getAction().get(0), "intake");
 
@@ -663,7 +665,7 @@ class StepGroupParsingTest {
         void namingAStepThatWaitsOnAnotherInsideTheGroupIsRejected() {
             PlanDefinition pd = new PlanDefinition();
             PlanDefinitionActionComponent consultation =
-                    namingEntryStep(repeatingBy(group(pd.addAction(), "consultation", "must"), "entry-step"), "examination");
+                    namingEntryStep(repeatingBy(group(pd.addAction(), "consultation", null), "entry-step"), "examination");
             triggeredStep(consultation.addAction(), "history", "2");
             after(triggeredStep(consultation.addAction(), "examination", "3"), "history", 0);
 
@@ -674,8 +676,10 @@ class StepGroupParsingTest {
         void aVisitDrivenGroupWithADeadlineIsRejected_beforeEitherFeatureIsBuilt() {
             // A permanent rule, so it must fire ahead of the phase gates on tolerance-days and
             // cycle-boundary: lifting either gate later must not let the pair through.
+            // Mandatory, as it could be once that gate lifts too.
             PlanDefinition pd = reviewProtocol();
             PlanDefinitionActionComponent review = pd.getAction().get(0);
+            review.setRequiredBehavior(ActionRequiredBehavior.MUST);
             review.addExtension(new Extension(
                     PlanDefinitionParser.CYCLE_BOUNDARY_EXTENSION_URL, new CodeType("calendar-day")));
             review.addExtension(new Extension(
@@ -695,7 +699,7 @@ class StepGroupParsingTest {
         @Test
         void aGroupFollowingAGroupIsNotSupportedYet() {
             PlanDefinition pd = reviewProtocol();
-            PlanDefinitionActionComponent followUp = group(pd.addAction(), "follow-up", "must");
+            PlanDefinitionActionComponent followUp = group(pd.addAction(), "follow-up", null);
             triggeredStep(followUp.addAction(), "recheck", "8480-6");
             after(followUp, "review", 30);
 
@@ -706,7 +710,7 @@ class StepGroupParsingTest {
         void aGroupFollowingAStepLoads() {
             PlanDefinition pd = new PlanDefinition();
             triggeredStep(pd.addAction(), "registration", "1");
-            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit", "must");
+            PlanDefinitionActionComponent visit = group(pd.addAction(), "visit", null);
             triggeredStep(visit.addAction(), "bp", "85354-9");
             after(visit, "registration", 42);
 
