@@ -55,7 +55,7 @@ on a group, on a step inside a group, or point at a group. What is supported:
 
 | What | Example | Loads? | What happens |
 |---|---|---|---|
-| A group follows a step. The `relatedAction` is on the group | `visit-2`, 6 weeks after `registration` | Yes | The visit is due 6 weeks after registration is done. Its first steps take that due date |
+| A group follows a step. The `relatedAction` is on the group | `visit-2`, 6 weeks after `registration` | Yes | The visit is due 6 weeks after registration is done. Its first steps take that due date. A nested group follows the same rules as a step inside a group (see below) |
 | A step inside a group follows a step outside it | `visit { bp, 7 days after registration }` | Yes | The order works, and the step keeps its own offset, like a step in no group. In a repeating group, only the first cycle uses the offset (see below) |
 | A step follows a group. The `relatedAction` names the group | `referral`, after `visit-2` | No | CCE can't tell yet when a group is done, so the step would never be created. For now, name a step inside the group instead |
 | A group follows a group | `visit-3`, 4 weeks after `visit-2` | No | The same reason. For now, name a step inside `visit-2` instead |
@@ -93,6 +93,27 @@ visit {
 - **A visit that repeats** (`cycle-boundary`): only the first visit uses the offset. A later visit means the
   patient came back, so "registration + 7 days" would already be past. BP is then created with no due
   date. A step that should happen only once belongs outside the repeating group.
+
+This also holds for a step deeper inside the visit, such as `visit { imaging { scan, 7 days after
+registration } }`. `imaging` is new in each visit, but a later visit is still a later cycle, so a later
+visit's scan has no due date. The cycles that count are those of the groups between the step and the step
+it follows. In `pregnancy { registration; visit { bp, 7 days after registration } }`, where the pregnancy
+repeats, each pregnancy has its own registration. So the first visit of the second pregnancy uses the
+offset again.
+
+A **nested group** that follows a step outside its parent works the same way:
+
+```
+registration
+visit {
+  lab  (relatedAction: after-end registration, offset 7 days) { lab-order }
+}
+```
+
+- **Registration is done:** in the first visit, `lab` is due 7 days after it, and so is `lab-order`.
+- **Registration isn't done yet:** `lab` doesn't open with the visit. It opens when registration is done,
+  due 7 days later.
+- **A later visit:** `lab` opens with the visit with no due date, and so does `lab-order`.
 
 ---
 
